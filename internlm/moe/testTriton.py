@@ -247,7 +247,7 @@ def benchmark_sum():
     assert output4_triton.shape == output4_torch.shape
     if not torch.allclose(output4_triton, output4_torch, atol=atol):
         print(f"the difference is : {output4_triton - output4_torch}")
-    
+
 @triton.jit
 def _softmax_kernel(
     input_ptr,
@@ -257,6 +257,9 @@ def _softmax_kernel(
     M: tl.constexpr, N: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
+    #TODO this kernel only suport the BLOCK_SIZE=1
+    # each block process BLOCK_SIZE rows or columns
+    
     # obtain the block id in grid
     pid = tl.program_id(axis=0)
     
@@ -285,13 +288,54 @@ def _softmax_kernel(
     # compute the denominator
     denorm = tl.sum(input_exp, axis=dim)
     # compute the normalize value
+    # tl.device_print("pid, input_data, input_exp, denorm: ", pid, input_data, input_exp, denorm)
     input_norm = input_exp / denorm
-    
-    # input_norm = tl.softmax(input_data)
     
     # compute the output location
     output_ptrs = output_ptr + offset + row[:, None] * stride_input_row + col[None, :] * stride_input_col
     # store the output value
+    tl.store(output_ptrs, input_norm) 
+
+@triton.jit
+def _softmax_kernel2(
+    input_ptr,
+    output_ptr,
+    stride_input_row, stride_input_col,
+    dim: tl.constexpr,
+    M: tl.constexpr, N: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr
+):
+    # each block process BLOCK_SIZE elements
+    
+    pid = tl.program_id(axis=0)
+    
+    if dim == 0:
+        col = pid
+        row = tl.arange(0, BLOCK_SIZE)
+        # input_ptrs = input_ptr + row[:, None] * stride_input_row + col * stride_input_col
+        # output_ptrs = output_ptr + row[:, None] * stride_input_row + col * stride_input_col
+        input_ptrs = input_ptr + row * stride_input_row + col * stride_input_col
+        output_ptrs = output_ptr + row * stride_input_row + col * stride_input_col
+    else:
+        col = tl.arange(0, BLOCK_SIZE)
+        row = pid
+        # input_ptrs = input_ptr + row * stride_input_row + col[None, :] * stride_input_col
+        # output_ptrs = output_ptr + row * stride_input_row + col[None, :] * stride_input_col
+        input_ptrs = input_ptr + row * stride_input_row + col * stride_input_col
+        output_ptrs = output_ptr + row * stride_input_row + col * stride_input_col
+    
+    # input_ptrs = input_ptr + row[:, None] * stride_input_row + col[None, :] * stride_input_col
+    
+    # load data
+    input_data = tl.load(input_ptrs)
+    
+    input_exp = tl.exp(input_data)
+    denorm = tl.sum(input_exp, axis=dim)
+    input_norm = input_exp / denorm
+    
+    # compute the output 
+    # output_ptrs = output_ptr + row[:, None] * stride_input_row + col[None, :] * stride_input_col
+    # store output
     tl.store(output_ptrs, input_norm)
 
 def softmax2d(input: torch.Tensor, dim: int = 0):
@@ -300,11 +344,24 @@ def softmax2d(input: torch.Tensor, dim: int = 0):
     M, N = input.shape
     stride_row, stride_col = input.stride()
     
-    BLOCK_SIZE = 1
-    GRID_SIZE = M if dim == 1 else N
+    # BLOCK_SIZE = 2
+    # GRID_SIZE = M if dim == 1 else N
     
-    grid = lambda meta: (triton.cdiv(GRID_SIZE, BLOCK_SIZE), )
-    _softmax_kernel[grid](
+    # grid = lambda meta: (triton.cdiv(GRID_SIZE, BLOCK_SIZE), )
+    # _softmax_kernel[grid](
+    #     input,
+    #     output,
+    #     stride_row, stride_col,
+    #     dim=dim,
+    #     M=M, N=N,
+    #     BLOCK_SIZE=BLOCK_SIZE,
+    # )
+    
+    block_size = N if dim == 1 else M
+    grid_size = M if dim == 1 else N
+    BLOCK_SIZE = triton.next_power_of_2(block_size)
+    
+    _softmax_kernel2[(grid_size, )](
         input,
         output,
         stride_row, stride_col,
@@ -312,14 +369,17 @@ def softmax2d(input: torch.Tensor, dim: int = 0):
         M=M, N=N,
         BLOCK_SIZE=BLOCK_SIZE,
     )
+    
     return output
 
 def benchmark_softmax():
     atol = 1e-8
     
     device = torch.device("cuda:0")
-    shape = (128, 128)
+    shape = (4096, 4096)
     input = torch.randn(shape, device=device)
+    # input = torch.arange(0, 16).reshape(shape).to(torch.float32).to(device)
+    print(f"input = {input}")
     
     # dim == 0
     output1_triton = softmax2d(input, dim=0)
@@ -334,7 +394,297 @@ def benchmark_softmax():
     assert torch.allclose(output2_triton, output2_torch, atol=atol)
     
     print("Success!")
+
+@triton.jit
+def _argmax_kernel(
+    input_ptr,
+    output_ptr,
+    stride_input_row, stride_input_col,
+    M: tl.constexpr, N: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    row = tl.program_id(axis=0)
+    col = tl.arange(0, BLOCK_SIZE)
     
+    input_ptrs = input_ptr + row * stride_input_row + col * stride_input_col
+    
+    input_data = tl.load(input_ptrs, mask=row < M, other=-float('inf'))
+    input_argmax = tl.argmax(input_data, axis=0)
+    
+    output_ptrs = output_ptr + row 
+    
+    tl.store(output_ptrs, input_argmax)
+
+def argmax():
+    device = torch.device("cuda:0")
+    
+    # input = torch.arange(0, 8).reshape(2, 4).to(device)
+    # input[0][0] = 8
+    input = torch.randn((2048, 4096), device=device)
+    output = torch.zeros((2048, ), dtype=input.dtype, device=input.device)
+    M, N = input.shape
+    stride0, stride1 = input.stride()
+    
+    BLOCK_SIZE = N
+    # import pdb; pdb.set_trace()
+    _argmax_kernel[(M, )](
+        input,
+        output,
+        stride0, stride1,
+        M, N,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+    
+    print(f"output = {output}, dtype={output.dtype}")
+    torch_output = torch.argmax(input, dim=1)
+    print(f"torch output = {torch_output}, dtype={torch_output.dtype}")
+    
+    assert torch.allclose(output.to(torch.int64), torch_output)
+    
+@triton.jit
+def _softmax_dim1_kernel(
+    input_ptr,
+    output_ptr,
+    stride_input_row, stride_input_col,
+    stride_output_row, stride_output_col,
+    M: tl.constexpr, N: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    # the softmax computation for each row is independent
+    # each block process each row
+    row_id = tl.program_id(axis=0)
+    col_offset = tl.arange(0, BLOCK_SIZE)
+    
+    input_ptrs = input_ptr + row_id * stride_input_row + col_offset * stride_input_col
+    
+    # load data
+    input_data = tl.load(input_ptrs, mask=col_offset < N, other=-float("inf"))
+    input_exp = tl.exp(input_data)
+    denom = tl.sum(input_exp, axis=0)
+    softmax_output = input_exp / denom
+    
+    # compute the output pointer
+    output_ptrs = output_ptr + row_id * stride_output_row + col_offset * stride_output_col
+    # store data
+    tl.store(output_ptrs, softmax_output, mask=col_offset < N)
+
+def softmax_dim1(input: torch.Tensor):
+    M, N = input.shape
+    stride_input_row, stride_input_col = input.stride()
+    
+    output = torch.zeros(input.shape, device=input.device)
+    BLOCK_SIZE = triton.next_power_of_2(N)
+    
+    _softmax_dim1_kernel[(M, )](
+        input,
+        output,
+        stride_input_row, stride_input_col,
+        stride_input_row, stride_input_col,
+        M, N,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+    
+    return output
+
+def benchmark_softmax_dim1():
+    device = torch.device("cuda:0")
+    shape = (4096, 4096)
+    
+    input = torch.randn(shape, device=device)
+    
+    triton_output = softmax_dim1(input)
+    torch_output = F.softmax(input, dim=1)
+    
+    assert triton_output.shape == torch_output.shape
+    assert torch.allclose(triton_output, torch_output)
+
+@triton.jit
+def _fused_dim1_kernel(
+    input_ptr,
+    output_ptr,
+    stride_input_row, stride_input_col,
+    stride_output_row, stride_output_col,
+    M: tl.constexpr, N: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    # the softmax computation for each row is independent
+    # each block process each row
+    row_id = tl.program_id(axis=0)
+    col_offset = tl.arange(0, BLOCK_SIZE)
+    
+    input_ptrs = input_ptr + row_id * stride_input_row + col_offset * stride_input_col
+    
+    # load data
+    input_data = tl.load(input_ptrs, mask=col_offset < N, other=-float("inf"))
+    input_exp = tl.exp(input_data)
+    denom = tl.sum(input_exp, axis=0)
+    softmax_output = input_exp / denom
+    argmax_output = tl.argmax(softmax_output, axis=0)
+    
+    # compute the output pointer
+    # output_ptrs = output_ptr + row_id
+    output_ptrs = output_ptr + row_id * stride_output_row + argmax_output * stride_output_col
+    # store data
+    # tl.store(output_ptrs, argmax_output)
+    tl.store(output_ptrs, 1, mask=argmax_output < N)
+
+
+def fused_dim1(input: torch.Tensor):
+
+    M, N = input.shape
+    stride_row, stride_col = input.stride()
+ 
+    output = torch.zeros((M, N), dtype=torch.int64, device=input.device)
+    
+    stride_output_row, stride_output_col = output.stride()
+    
+    BLOCK_SIZE = triton.next_power_of_2(N)
+
+    _fused_dim1_kernel[(M, )](
+        input,
+        output,
+        stride_row, stride_col,
+        stride_output_row, stride_output_col,
+        M=M, N=N,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+    return output
+
+@triton.jit
+def _fused_dim0_kernel(
+    input_ptr,
+    output_ptr,
+    stride_input_row, stride_input_col,
+    stride_output_row, stride_output_col,
+    M: tl.constexpr, N: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    # dim = 0:
+    # the softmax computation for each column is independent
+    # each block processes each column
+    col_id = tl.program_id(axis=0)
+    row_offset = tl.arange(0, BLOCK_SIZE)
+    
+    input_ptrs = input_ptr + row_offset * stride_input_row + col_id * stride_input_col
+    
+    # load data
+    input_data = tl.load(input_ptrs, mask=row_offset < M, other=-float("inf"))
+    input_exp = tl.exp(input_data)
+    denom = tl.sum(input_exp, axis=0)
+    softmax_output = input_exp / denom
+    argmax_output = tl.argmax(softmax_output, axis=0)
+    
+    # compute the output pointer
+    # output_ptrs = output_ptr + col_id
+    output_ptrs = output_ptr + col_id * stride_output_row + argmax_output * stride_output_col
+    # store data
+    # tl.store(output_ptrs, argmax_output)
+    tl.store(output_ptrs, 1, mask=argmax_output < M)
+
+def fused_dim0(input: torch.Tensor):
+    
+    M, N = input.shape
+    stride_row, stride_col = input.stride()
+ 
+    output = torch.zeros((N, M), dtype=torch.int64, device=input.device)
+    stride_output_row, stride_output_col = output.stride()
+    
+    BLOCK_SIZE = triton.next_power_of_2(M)
+
+    _fused_dim0_kernel[(N, )](
+        input,
+        output,
+        stride_row, stride_col,
+        stride_output_row, stride_output_col,
+        M=M, N=N,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+    return output
+
+def fused2d(input: torch.Tensor, dim: int = 0):
+    if dim == 0:
+        return fused_dim0(input)
+    return fused_dim1(input)
+
+
+@triton.jit
+def _one_hot_kernel(
+    input_ptr,
+    output_ptr,
+    stride_input_row, stride_input_col,
+    stride_output_row, stride_output_col,
+    M: tl.constexpr, N: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    # each block process each row 
+    row_id = tl.program_id(axis=0)
+    
+    col_offset = tl.arange(0, BLOCK_SIZE)
+    
+    input_ptrs = input_ptr + row_id * stride_input_row + col_offset * stride_input_col
+    
+    input_data = tl.load(input_ptrs, mask=col_offset < N)
+    
+    input_argmax = tl.argmax(input_data, axis=0)
+    
+    output_ptrs = output_ptr + row_id * stride_output_row + input_argmax * stride_output_col
+    
+    tl.store(output_ptrs, 1, mask=input_argmax < N)
+
+def one_hot():
+    
+    device = torch.device('cuda:0')
+    # input = torch.Tensor([[0, 3, 1, 2], [6, 7, 4, 5], [12, 11, 8, 9]]).to(device)
+    shape = (4096, 4096)
+    input = torch.randn(shape, device=device)
+    # output = torch.zeros_like(input).to(torch.int64)
+    
+    output_triton = fused_dim1(input)
+    output_torch = F.one_hot(torch.argmax(F.softmax(input, dim=1), dim=1), num_classes=shape[0])
+    
+    assert output_triton.shape == output_torch.shape
+    assert torch.allclose(output_triton, output_torch)
+    
+    # stride_row, stride_col = input.stride()
+    # M, N = input.shape
+    # BLOCK_SIZE = triton.next_power_of_2(N)
+    
+    # _one_hot_kernel[(M, )](
+    #     input,
+    #     output,
+    #     stride_row, stride_col,
+    #     stride_row, stride_col,
+    #     M, N,
+    #     BLOCK_SIZE=BLOCK_SIZE,
+    # )
+    
+    # print(f"output = {output}")
+
+def benchmak_fused():
+    device = torch.device("cuda:0")
+    shape = (8192, 8192)
+    input = torch.randn(shape, device=device)
+    
+    # dim = 0
+    output0_triton = fused_dim0(input)
+    output0_triton_unify = fused2d(input, dim=0)
+    output0_torch = F.one_hot(torch.argmax(F.softmax(input, dim=0), dim=0), num_classes=shape[0])
+    assert output0_triton.shape == output0_torch.shape
+    assert output0_triton_unify.shape == output0_torch.shape
+    assert torch.allclose(output0_triton, output0_torch)
+    assert torch.allclose(output0_triton_unify, output0_torch)
+    
+    # dim = 1
+    output1_triton = fused_dim1(input)#.to(torch.int64)
+    output1_triton_unify = fused2d(input, dim=1)
+    output1_torch = F.one_hot(torch.argmax(F.softmax(input, dim=1), dim=1), num_classes=shape[1])
+    assert output1_triton.shape == output1_torch.shape
+    assert output1_triton_unify.shape == output1_torch.shape
+    assert torch.allclose(output1_triton, output1_torch)
+    assert torch.allclose(output1_triton_unify, output1_torch)
+    
+    
+    print("Success!")
 
 if __name__ == '__main__':
     # device = torch.device('cuda:0')
@@ -367,4 +717,9 @@ if __name__ == '__main__':
     # sum_dim1()
     
     # benchmark_sum()
-    benchmark_softmax()
+    # benchmark_softmax()
+    benchmak_fused()
+    # argmax()
+    # benchmark_softmax_dim1()
+    
+    # one_hot()
