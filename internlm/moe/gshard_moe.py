@@ -244,6 +244,7 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     locations2 += torch.sum(mask1, dim=0, keepdim=True)
 
     # gating decisions
+    # ignore this computation
     exp_counts = torch.sum(mask1, dim=0).detach().to("cpu")
 
     # Compute l_aux
@@ -256,6 +257,7 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     mask2 *= torch.lt(locations2, capacity)
 
     # Store the capacity location for each token
+    
     locations1_s = torch.sum(locations1 * mask1, dim=1)
     locations2_s = torch.sum(locations2 * mask2, dim=1)
 
@@ -275,6 +277,8 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     gates2 = einsum("s,se->se", gates2_s, mask2_float)
     locations1_sc = F.one_hot(locations1_s, num_classes=capacity).type_as(logits)
     locations2_sc = F.one_hot(locations2_s, num_classes=capacity).type_as(logits)
+    if gpc.get_global_rank() == 0:
+        import pdb; pdb.set_trace()
     combine1_sec = einsum("se,sc->sec", gates1, locations1_sc)
     combine2_sec = einsum("se,sc->sec", gates2, locations2_sc)
     combine_weights = combine1_sec + combine2_sec
