@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from testTriton import fused_gating1, fused_gating2, fused_gating3, fused_gating5
+from testTriton import fused_gating35
 
 def softmax_argmax(input: torch.Tensor):
     softmax_output = F.softmax(input, dim=1)
@@ -120,12 +121,15 @@ def top2gating_triton(logits: Tensor, capacity_factor: float = 1.0, min_capacity
     
     locations1, locations2, res, mask1, mask2 = fused_gating2(mask1, mask2, gates, capacity)
     l_aux = torch.mean(res)
-    # Store the capacity location for each token
-    locations1_sc, locations2_sc = fused_gating3(locations1, locations2, capacity=capacity)
     
-    # return l_aux, locations1_sc, locations2_sc
+    # # Store the capacity location for each token
+    # locations1_sc, locations2_sc = fused_gating3(locations1, locations2, capacity=capacity)
     
-    combine_weights, dispatch_mask = fused_gating5(gates, mask1, mask2, locations1_sc, locations2_sc)
+    # # return l_aux, locations1_sc, locations2_sc
+    
+    # combine_weights, dispatch_mask = fused_gating5(gates, mask1, mask2, locations1_sc, locations2_sc)
+    
+    combine_weights, dispatch_mask = fused_gating35(gates, locations1, locations2, mask1, mask2, c=capacity)
 
     return l_aux, combine_weights, dispatch_mask
 
@@ -140,6 +144,7 @@ l_aux_triton, combine_weights_triton, dispatch_mask_triton = top2gating_triton(i
 
 assert l_aux_torch.shape == l_aux_triton.shape
 assert torch.allclose(l_aux_torch, l_aux_triton)
+# import pdb; pdb.set_trace()
 assert combine_weights_torch.shape == combine_weights_triton.shape
 assert torch.allclose(combine_weights_torch, combine_weights_triton)
 assert dispatch_mask_torch.shape == dispatch_mask_triton.shape

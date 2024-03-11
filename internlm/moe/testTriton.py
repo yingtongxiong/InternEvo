@@ -1162,7 +1162,164 @@ def fused_gating5(gates, mask1, mask2, loca1, loca2):
     )
     
     return combine, dispatch_mask
+
+@triton.jit
+def _fused_kernel35(
+    gates_ptr,
+    input1_ptr, # locations1 * mask1
+    input2_ptr, # locations2 * mask2
+    mask1_ptr,
+    mask2_ptr,
+    gates1_ptr,
+    gates2_ptr,
+    combine_ptr,
+    dispatch_mask_ptr,
+    stride_gates_s,
+    stride_input_s,
+    stride_mask_s,
+    stride_combine_s, stride_combine_e,
+    s: tl.constexpr, e: tl.constexpr, c: tl.constexpr,
+    min_value: tl.constexpr,
+    BLOCK_SIZE_e: tl.constexpr,
+):
+    s_pid = tl.program_id(axis=0)
+    e_offset = tl.arange(0, BLOCK_SIZE_e)
     
+    #locations1_s = torch.sum(locations1 * mask1, dim=1)
+    #locations2_s = torch.sum(locations2 * mask2, dim=1)
+    
+    input1_ptrs = input1_ptr + s_pid * stride_input_s + e_offset
+    input2_ptrs = input2_ptr + s_pid * stride_input_s + e_offset
+    
+    input1_data = tl.load(input1_ptrs, mask=e_offset < e)
+    input2_data = tl.load(input2_ptrs, mask=e_offset < e)
+    
+    locations1_s = tl.sum(input1_data, axis=0)
+    locations2_s = tl.sum(input2_data, axis=0)
+    
+    # output1_ptrs = output1_ptr + pid * stride_output_row + locations1_s * stride_output_col
+    # output2_ptrs = output2_ptr + pid * stride_output_row + locations2_s * stride_output_col
+    
+    # tl.store(output1_ptrs, 1, mask=locations1_s < capacity)
+    # tl.store(output2_ptrs, 1, mask=locations2_s < capacity)
+    
+    gates_ptrs = gates_ptr + s_pid * stride_gates_s + e_offset
+    mask1_ptrs = mask1_ptr + s_pid * stride_mask_s + e_offset
+    mask2_ptrs = mask2_ptr + s_pid * stride_mask_s + e_offset
+    
+    gates_data = tl.load(gates_ptrs, mask=e_offset < e)
+    mask1_data = tl.load(mask1_ptrs, mask=e_offset < e)
+    mask2_data = tl.load(mask2_ptrs, mask=e_offset < e)
+    
+    multi1 = gates_data * mask1_data
+    multi2 = gates_data * mask2_data
+    gates1_s = tl.sum(multi1, axis=0)
+    gates2_s = tl.sum(multi2, axis=0)
+    denom_s = gates1_s + gates2_s
+    denom_s = tl.where(denom_s < min_value, min_value, denom_s)
+    gates1_s /= denom_s
+    gates2_s /= denom_s
+    
+    gates1 = gates1_s * mask1_data
+    gates2 = gates2_s * mask2_data
+    
+    gates1_ptrs = gates1_ptr + s_pid * stride_gates_s + e_offset
+    gates2_ptrs = gates2_ptr + s_pid * stride_gates_s + e_offset
+    
+    tl.store(gates1_ptrs, gates1, mask=e_offset < e)
+    tl.store(gates2_ptrs, gates2, mask=e_offset < e)
+    # tl.device_print("pid", s_pid, gates1, gates2, gates1 + gates2)
+
+    if locations1_s == locations2_s:
+        data = gates1 + gates2
+        combine_ptrs = combine_ptr + s_pid * stride_combine_s + e_offset * stride_combine_e + locations1_s
+        mask = (e_offset < e) & (locations1_s < c)
+        tl.store(combine_ptrs, data, mask=mask)
+        
+        dispatch_mask_ptrs = dispatch_mask_ptr + s_pid * stride_combine_s + e_offset * stride_combine_e + locations1_s
+        dispatch_mask_data = tl.where(data > 0, 1, 0)
+        tl.store(dispatch_mask_ptrs, dispatch_mask_data, mask=mask)
+    else:
+        combine1_ptrs = combine_ptr + s_pid * stride_combine_s + e_offset * stride_combine_e + locations1_s
+        combine2_ptrs = combine_ptr + s_pid * stride_combine_s + e_offset * stride_combine_e + locations2_s
+        mask1_ = (e_offset < e) & (locations1_s < c)
+        mask2_ = (e_offset < e) & (locations2_s < c)
+        tl.store(combine1_ptrs, gates1, mask=mask1_)
+        tl.store(combine2_ptrs, gates2, mask=mask2_)
+        
+        dispatch_mask_ptrs1 = dispatch_mask_ptr + s_pid * stride_combine_s + e_offset * stride_combine_e + locations1_s
+        dispatch_mask_ptrs2 = dispatch_mask_ptr + s_pid * stride_combine_s + e_offset * stride_combine_e + locations2_s
+        tl.store(dispatch_mask_ptrs1, tl.where(gates1 > 0, 1, 0), mask=mask1_)
+        tl.store(dispatch_mask_ptrs2, tl.where(gates2 > 0, 1, 0), mask=mask2_)
+    
+    # =================================================================================
+    # loca1_ptrs = loca1_ptr + s_pid * stride_loca_s + c_offset
+    # loca2_ptrs = loca2_ptr + s_pid * stride_loca_s + c_offset
+    
+    # loca1_data = tl.load(loca1_ptrs, mask=c_offset < c)
+    # loca2_data = tl.load(loca2_ptrs, mask=c_offset < c)
+    
+    # loca1_data = tl.expand_dims(loca1_data, axis=0)
+    # loca1_data = tl.broadcast_to(loca1_data, (BLOCK_SIZE_e, BLOCK_SIZE_c))
+    # gates1 = tl.expand_dims(gates1, axis=1)
+    
+    # loca2_data = tl.expand_dims(loca2_data, axis=0)
+    # loca2_data = tl.broadcast_to(loca2_data, (BLOCK_SIZE_e, BLOCK_SIZE_c))
+    # gates2 = tl.expand_dims(gates2, axis=1)
+    
+    # combine1 = gates1 * loca1_data
+    # combine2 = gates2 * loca2_data
+    # combine = combine1 + combine2
+
+    # combine_ptrs = combine_ptr + s_pid * stride_combine_s + e_offset[:, None] * stride_combine_e + c_offset[None, :] * stride_combine_c
+    # dispatch_mask_ptrs = dispatch_mask_ptr + s_pid * stride_combine_s + e_offset[:, None] * stride_combine_e + c_offset[None, :] * stride_combine_c
+    
+    # mask = (e_offset[:, None] < e) & (c_offset[None, :] < c) 
+    
+    # dispatch_mask_data = tl.where(combine > 0, 1, 0)
+    
+    # tl.store(combine_ptrs, combine, mask=mask)
+    # tl.store(dispatch_mask_ptrs, dispatch_mask_data, mask=mask)
+
+def fused_gating35(gates, input1, input2, mask1, mask2, c=1):
+    s, e = gates.shape
+    stride_gates_s, _ = gates.stride()
+    stride_input_s, _ = input1.stride()
+    stride_mask_s, _ = mask1.stride()
+    
+    gates1 = torch.zeros((s,e), device=gates.device)
+    gates2 = torch.zeros((s,e), device=gates.device)
+    
+    combine = torch.zeros((s, e, c), device=gates.device)
+    dispatch_mask = torch.zeros((s, e, c), device=gates.device, dtype=torch.bool)
+    
+    stride_combine_s, stride_combine_e, stride_combine_c = combine.stride()
+    
+    min_value = torch.finfo(gates.dtype).eps
+    BLOCK_SIZE_e = triton.next_power_of_2(e)
+    
+    _fused_kernel35[(s, )](
+        gates,
+        input1,
+        input2,
+        mask1,
+        mask2,
+        gates1,
+        gates2,
+        combine,
+        dispatch_mask,
+        stride_gates_s,
+        stride_input_s,
+        stride_mask_s,
+        stride_combine_s,
+        stride_combine_e,
+        s, e, c,
+        min_value,
+        BLOCK_SIZE_e,
+    )
+    
+    return combine, dispatch_mask
+    # return gates1, gates2, combine, dispatch_mask
 
 def torch_gating1(logits1, logits2, capacity=1):
     gates = F.softmax(logits1, dim=1)
@@ -1191,11 +1348,18 @@ def torch_gating1(logits1, logits2, capacity=1):
     # mask1_return, mask2_return = mask1.clone(), mask2.clone()
     # locations1_return, locations2_return = locations1.clone(), locations2.clone()
     
-    mask1_ = mask1 * torch.lt(locations1, capacity)
-    mask2_ = mask2 * torch.lt(locations2, capacity)
+    mask1 *= torch.lt(locations1, capacity)
+    mask2 *= torch.lt(locations2, capacity)
     
-    locations1 = locations1 * mask1_
-    locations2 = locations2 * mask2_
+    locations1 = locations1 * mask1
+    locations2 = locations2 * mask2
+    
+    locations1_re, locations2_re = locations1.clone(), locations2.clone()
+    mask1_re, mask2_re = mask1.clone(), mask2.clone()
+    
+    print(f"gates = {gates}")
+    print(f"mask1 = {mask1}")
+    print(f"mask2 = {mask2}")
     
     locations1_s = torch.sum(locations1, dim=1)
     locations2_s = torch.sum(locations2, dim=1)
@@ -1219,12 +1383,25 @@ def torch_gating1(logits1, logits2, capacity=1):
     gates1 = torch.einsum("s,se->se", gates1_s, mask1_float)
     gates2 = torch.einsum("s,se->se", gates2_s, mask2_float)
     
+    print(f"gates1_s = ", gates1_s)
+    print(f"mask1 = ", mask1_float)
+    print(f"gates2_s = ", gates2_s)
+    print(f"mask2 = ", mask2_float)
+    
+    # return gates, locations1_re, locations2_re, mask1_re, mask2_re, gates1, gates2
+    
+    # print(f"locations1_s: {locations1_s}")
+    # print(f"locations2_s: {locations2_s}")
+    # print(f"gates1: {gates1}")
+    # print(f"gates2: {gates2}")
+    
     combine1_sec = torch.einsum("se,sc->sec", gates1, locations1_sc)
     combine2_sec = torch.einsum("se,sc->sec", gates2, locations2_sc)
     combine_weights = combine1_sec + combine2_sec
     dispatch_mask = combine_weights.bool()
     
-    return gates, mask1, mask2, locations1_sc, locations2_sc, combine_weights, dispatch_mask
+    return gates, locations1_re, locations2_re, mask1_re, mask2_re, gates1, gates2, combine_weights, dispatch_mask
+    # return gates, mask1, mask2, locations1_sc, locations2_sc, combine_weights, dispatch_mask
     # return locations1, locations2,  locations1_sc, locations2_sc, combine_weights
 
 @triton.jit
@@ -1291,8 +1468,8 @@ def einsum2D(gates1, gates2, locations1, locations2):
 
 def bench_fused():
     device = torch.device("cuda:0")
-    logits1 = torch.randn(4096, 12).to(device)
-    logits2 = torch.randn(4096, 12).to(device)
+    logits1 = torch.randn(4096*16, 12).to(device)
+    logits2 = torch.randn(4096*16, 12).to(device)
     
     # mask1_triton, mask2_triton, gates_triton = fused_gating1(logits1, logits2)
     # mask1_torch, mask2_torch, gates_torch = torch_gating1(logits1, logits2)
@@ -1337,9 +1514,19 @@ def bench_fused():
     # assert torch.allclose(gates1_s_triton, gates1_s_torch)
     # assert torch.allclose(gates2_s_triton, gates2_s_torch)
     
-    gates, mask1, mask2, locations1_sc, locations2_sc, combine_weights, dispatch_mask= torch_gating1(logits1, logits2, capacity=2048)
-    combine_weights_triton, mask_triton = fused_gating5(gates, mask1, mask2, locations1_sc, locations2_sc)
+    # gates, mask1, mask2, locations1_sc, locations2_sc, combine_weights, dispatch_mask= torch_gating1(logits1, logits2, capacity=2048)
+    # combine_weights_triton, mask_triton = fused_gating5(gates, mask1, mask2, locations1_sc, locations2_sc)
+    # assert combine_weights_triton.shape == combine_weights.shape
+    # assert torch.allclose(combine_weights_triton, combine_weights)
+    # assert mask_triton.shape == dispatch_mask.shape
+    # assert torch.allclose(mask_triton, dispatch_mask)
+    
+    gates, locations1_re, locations2_re, mask1_re, mask2_re, gates1, gates2,combine_weights, dispatch_mask= torch_gating1(logits1, logits2, capacity=2048)
+    gates1_, gates2_, combine_weights_triton, mask_triton = fused_gating35(gates, locations1_re, locations2_re, mask1_re, mask2_re, c=2048)
+    assert torch.allclose(gates1_, gates1)
+    assert torch.allclose(gates2_, gates2)
     # import pdb; pdb.set_trace()
+    
     assert combine_weights_triton.shape == combine_weights.shape
     assert torch.allclose(combine_weights_triton, combine_weights)
     assert mask_triton.shape == dispatch_mask.shape
