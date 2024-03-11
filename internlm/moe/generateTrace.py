@@ -7,6 +7,7 @@ from torch import Tensor
 
 from testTriton import fused_gating1, fused_gating2, fused_gating3, fused_gating5
 from testTriton import fused_gating35
+from gating_triton import fused_top2_gating_fwd
 
 def softmax_argmax(input: torch.Tensor):
     softmax_output = F.softmax(input, dim=1)
@@ -140,7 +141,8 @@ shape = (4096, 4)
 input = torch.randn(shape, device=device)
 
 l_aux_torch, combine_weights_torch, dispatch_mask_torch = top2gating(input)
-l_aux_triton, combine_weights_triton, dispatch_mask_triton = top2gating_triton(input)
+# l_aux_triton, combine_weights_triton, dispatch_mask_triton = top2gating_triton(input)
+l_aux_triton, combine_weights_triton, dispatch_mask_triton = fused_top2_gating_fwd(input)
 
 assert l_aux_torch.shape == l_aux_triton.shape
 assert torch.allclose(l_aux_torch, l_aux_triton)
@@ -167,7 +169,8 @@ with torch.profiler.profile(
             # output = softmax_argmax(input)
             # output = fused_dim1(input)
             # output = top2gating(input)
-            output = top2gating_triton(input)
+            # output = top2gating_triton(input)
+            output = fused_top2_gating_fwd(input)
             
             if i % 2 == 0:
                 prof.step()
