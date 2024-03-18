@@ -94,24 +94,26 @@ def fused_bwd(grad_l_aux, grad_combine, loca1, loca2, mask1, mask2, gates, ce):
     diag_mask = torch.diag(torch.ones(e)).to(device=grad_combine.device)
     block_size_e = triton.next_power_of_2(e)
     
-    _fused_bwd_kernel[(s, )](
-        grad_combine,
-        loca1,
-        loca2,
-        ce,
-        mask1,
-        mask2,
-        gates,
-        diag_mask,
-        grad_logits,
-        stride_sec_s, stride_sec_e,
-        stride_se_s,
-        grad_l_aux,
-        torch.finfo(gates.dtype).eps,
-        s, e, c,
-        block_size_e,
-    )
-    
+    with torch.cuda.device(grad_combine.device.index):
+        
+        _fused_bwd_kernel[(s, )](
+            grad_combine,
+            loca1,
+            loca2,
+            ce,
+            mask1,
+            mask2,
+            gates,
+            diag_mask,
+            grad_logits,
+            stride_sec_s, stride_sec_e,
+            stride_se_s,
+            grad_l_aux,
+            torch.finfo(gates.dtype).eps,
+            s, e, c,
+            block_size_e,
+        )
+        
     return grad_logits
 
 def BackwardTorch(grad_output1, grad_output2, locations1_se, locations2_se, mask1_float, mask2_float, gates, ce):

@@ -22,6 +22,8 @@ from internlm.utils.registry import MODEL_INITIALIZER
 from .base_moe import BaseMoELayer
 from .utils import all_to_all
 
+from .triton.gating_triton import Top2GatingFunc
+
 # global llm logger
 logger = get_logger(__file__)
 
@@ -268,7 +270,6 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     gates2_s = einsum("se,se->s", gates, mask2_float)
     denom_s = gates1_s + gates2_s
     # Avoid divide-by-zero
-    import pdb; pdb.set_trace()
     denom_s = torch.clamp(denom_s, min=torch.finfo(denom_s.dtype).eps)
     gates1_s /= denom_s
     gates2_s /= denom_s
@@ -278,8 +279,6 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     gates2 = einsum("s,se->se", gates2_s, mask2_float)
     locations1_sc = F.one_hot(locations1_s, num_classes=capacity).type_as(logits)
     locations2_sc = F.one_hot(locations2_s, num_classes=capacity).type_as(logits)
-    if gpc.get_global_rank() == 0:
-        import pdb; pdb.set_trace()
     combine1_sec = einsum("se,sc->sec", gates1, locations1_sc)
     combine2_sec = einsum("se,sc->sec", gates2, locations2_sc)
     combine_weights = combine1_sec + combine2_sec
@@ -358,6 +357,7 @@ class TopKGate(Module):
             )
 
         else:
+            # gate_output = Top2GatingFunc.apply(logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity)
             gate_output = top2gating(
                 logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity
             )

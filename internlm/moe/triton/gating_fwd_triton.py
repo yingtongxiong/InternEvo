@@ -262,59 +262,61 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
     block_size_e = triton.next_power_of_2(e)
     fill_value = torch.finfo(logits.dtype).min
     
-    _fused_kernel1[(s, )](
-        logits,
-        logits_w_noise,
-        mask1,
-        mask2,
-        gates,
-        fill_value,
-        stride_se_s,
-        e,
-        BLOCK_SIZE_e=block_size_e,
-    )
+    with torch.cuda.device(logits.device.index):
     
-    loca1 = torch.zeros_like(mask1)
-    loca2 = torch.zeros_like(mask2)
-    res = torch.zeros((e,)).to(mask1.device)
-    ce = torch.zeros((e,)).to(mask1.device)
-    
-    _fused_kernel2[(e, )](
-        gates,
-        mask1,
-        mask2,
-        loca1,
-        loca2,
-        res,
-        ce,
-        stride_se_s,
-        capacity=capacity,
-        s=s, e=e,
-        BLOCK_SIZE_s=block_size_s,
-    )
-    
-    combine_weights = torch.zeros((s, e, capacity), device=gates.device)
-    dispatch_mask = torch.zeros((s, e, capacity), device=gates.device, dtype=torch.bool)
-    
-    stride_sec_s, stride_sec_e, _ = combine_weights.stride()
-    
-    min_value = torch.finfo(gates.dtype).eps
-    
-    _fused_kernel3[(s, )](
-        gates,
-        loca1,
-        loca2,
-        mask1,
-        mask2,
-        combine_weights,
-        dispatch_mask,
-        stride_se_s,
-        stride_sec_s,
-        stride_sec_e,
-        e, capacity,
-        min_value,
-        block_size_e,
-    )
+        _fused_kernel1[(s, )](
+            logits,
+            logits_w_noise,
+            mask1,
+            mask2,
+            gates,
+            fill_value,
+            stride_se_s,
+            e,
+            BLOCK_SIZE_e=block_size_e,
+        )
+        
+        loca1 = torch.zeros_like(mask1)
+        loca2 = torch.zeros_like(mask2)
+        res = torch.zeros((e,)).to(mask1.device)
+        ce = torch.zeros((e,)).to(mask1.device)
+        
+        _fused_kernel2[(e, )](
+            gates,
+            mask1,
+            mask2,
+            loca1,
+            loca2,
+            res,
+            ce,
+            stride_se_s,
+            capacity=capacity,
+            s=s, e=e,
+            BLOCK_SIZE_s=block_size_s,
+        )
+        
+        combine_weights = torch.zeros((s, e, capacity), device=gates.device)
+        dispatch_mask = torch.zeros((s, e, capacity), device=gates.device, dtype=torch.bool)
+        
+        stride_sec_s, stride_sec_e, _ = combine_weights.stride()
+        
+        min_value = torch.finfo(gates.dtype).eps
+        
+        _fused_kernel3[(s, )](
+            gates,
+            loca1,
+            loca2,
+            mask1,
+            mask2,
+            combine_weights,
+            dispatch_mask,
+            stride_se_s,
+            stride_sec_s,
+            stride_sec_e,
+            e, capacity,
+            min_value,
+            block_size_e,
+        )
     
     return res, combine_weights, dispatch_mask, (loca1, loca2, mask1, mask2, gates, ce)
 
