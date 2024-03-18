@@ -279,7 +279,7 @@ class ModelFunction(torch.autograd.Function):
         num_experts = ctx.num_experts
         size = ce.shape[0]
         grad_me = grad_outputs[0] * num_experts * num_experts * ce / size
-        grad_gates3 = grad_me / gates_row * torch.ones((gates_row, gates_col), device=me.device)
+        grad_gates3 = grad_me / gates_row * torch.ones((gates_row, gates_col), device=ce.device)
         
         grad_gates = grad_gates1 + grad_gates2 + grad_gates3
               

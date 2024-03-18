@@ -268,6 +268,7 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     gates2_s = einsum("se,se->s", gates, mask2_float)
     denom_s = gates1_s + gates2_s
     # Avoid divide-by-zero
+    import pdb; pdb.set_trace()
     denom_s = torch.clamp(denom_s, min=torch.finfo(denom_s.dtype).eps)
     gates1_s /= denom_s
     gates2_s /= denom_s
