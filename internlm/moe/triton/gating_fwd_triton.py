@@ -30,7 +30,7 @@ def _fused_kernel1(
     denom1 = tl.sum(logits1_exp, axis=0)
     softmax1_output = logits1_exp / denom1
     argmax1_output = tl.argmax(softmax1_output, axis=0)
-    tl.store(gates_ptrs, softmax1_output)
+    tl.store(gates_ptrs, softmax1_output, mask=logits1_col < e)
     
     logits2_ptrs = logits2 + pid * stride_se_s + argmax1_output
     logits2_ptrs = logits2 + pid * stride_se_s + logits2_col
@@ -78,6 +78,7 @@ def _fused_kernel2(
     locations1,
     locations2,
     res,
+    ce,
     stride_se_s,
     capacity: tl.constexpr,
     s: tl.constexpr, e: tl.constexpr,
@@ -103,10 +104,11 @@ def _fused_kernel2(
     loca2_ptrs = locations2 + mask_row * stride_se_s + pid
     
     me = tl.sum(gates_data, axis=0) / s
-    ce = tl.sum(mask1_data, axis=0) / s 
-    mul = me * ce * e * e
+    ce_data = tl.sum(mask1_data, axis=0) / s 
+    mul = me * ce_data * e * e
     
     res_ptrs = res + pid
+    ce_ptrs = ce + pid
     
     mask1_data *= tl.where(loca1 < capacity, 1, 0)
     mask2_data *= tl.where(loca2 < capacity, 1, 0)
@@ -117,6 +119,7 @@ def _fused_kernel2(
     tl.store(loca1_ptrs, loca1, mask=mask_row < s)
     tl.store(loca2_ptrs, loca2, mask=mask_row < s)
     tl.store(res_ptrs, mul, mask=pid < e)
+    tl.store(ce_ptrs, ce_data, mask=pid < e)
     tl.store(mask1_ptrs, mask1_data, mask=mask_row < s)
     tl.store(mask2_ptrs, mask2_data, mask=mask_row < s)
 
@@ -274,6 +277,7 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
     loca1 = torch.zeros_like(mask1)
     loca2 = torch.zeros_like(mask2)
     res = torch.zeros((e,)).to(mask1.device)
+    ce = torch.zeros((e,)).to(mask1.device)
     
     _fused_kernel2[(e, )](
         gates,
@@ -282,6 +286,7 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
         loca1,
         loca2,
         res,
+        ce,
         stride_se_s,
         capacity=capacity,
         s=s, e=e,
@@ -311,5 +316,5 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
         block_size_e,
     )
     
-    return res, combine_weights, dispatch_mask
+    return res, combine_weights, dispatch_mask, (loca1, loca2, mask1, mask2, gates, ce)
 

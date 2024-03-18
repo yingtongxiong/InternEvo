@@ -1,26 +1,10 @@
-from typing import Callable, Dict, Optional, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-import triton
-import triton.language as tl
 
-# from gshard_moe import _capacity, gumbel_rsample
-# from internlm.moe.gshard_moe import _capacity
-from gating_fwd_triton import _fused_top2gating
-
-@torch.jit.script
-def _capacity(gates: Tensor, capacity_factor: Tensor, min_capacity: Tensor) -> Tensor:
-    # gates has shape of SE
-    num_tokens = gates.shape[0]
-    num_experts = gates.shape[1]
-    # to(torch.int64) works around a bug in torch.onnx.export:
-    # it should cast k to int64 when converting torch.topk but it doesn't.
-    capacity = torch.ceil((num_tokens / num_experts) * capacity_factor).to(torch.int64)
-    if capacity < min_capacity:
-        capacity = min_capacity.to(torch.int64)
-    return capacity
+from gating_triton import Top2GatingFunc, _capacity
 
 def top2gating(logits: Tensor, capacity_factor: float = 1.0, min_capacity: int = 2) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     """Implements Top2Gating on logits."""
@@ -95,39 +79,57 @@ def top2gating(logits: Tensor, capacity_factor: float = 1.0, min_capacity: int =
     return l_aux, combine_weights, dispatch_mask
 
 
-
-class Top2GatingFunc(torch.autograd.Function):
+class Top2Gating(torch.nn.Module):
     
-    @staticmethod
-    def forward(ctx: torch.Any, logits: torch.Tensor, capacity_factor: float = 1.0, min_capacity: int = 2):
-        # compute the capacity
-        capacity = _capacity(logits, torch.tensor(capacity_factor * 2), torch.tensor(min_capacity)).item()
-        # add noise to the original logits
-        # logits_w_noise = logits + gumbel_rsample(logits.shape, device=logits.device)
-        
-        res, combine_weights, dispatch_mask = _fused_top2gating(logits, logits, capacity)
-        l_aux = torch.mean(res)
-        return l_aux, combine_weights, dispatch_mask
-    
-    @staticmethod
-    def backward(ctx: torch.Any, *grad_outputs: torch.Any) -> torch.Any:
-        pass
-
-
+    def forward(self, logits, capacity_factor: float = 1.0, min_capacity: int = 2):
+        return top2gating(logits, capacity_factor, min_capacity)
 
 def test():
     device = torch.device('cuda:0')
-    shape = (4096, 4)
-    input = torch.randn(shape, device=device)
-    l_aux_torch, combine_weights_torch, dispatch_mask_torch = top2gating(input)
-    l_aux_triton, combine_weights_triton, dispatch_mask_triton = Top2GatingFunc.apply(input)
+    shape = (4096 * 2, 16)
+    logits_torch = torch.randn(shape, device=device, requires_grad=True)
     
-    assert l_aux_torch.shape == l_aux_triton.shape
-    assert torch.allclose(l_aux_torch, l_aux_triton)
+    with torch.no_grad():
+        logits_triton = logits_torch.clone()
+
+    logits_triton.requires_grad = True
+    
+    model_torch = Top2Gating()
+    model_triton = Top2GatingFunc.apply
+    
+    output1_torch, output2_torch, output3_torch = model_torch(logits_torch)
+    output1_triton, output2_triton, output3_triton = model_triton(logits_triton)
+    
+    assert output1_torch.shape == output1_triton.shape
     # import pdb; pdb.set_trace()
-    assert combine_weights_torch.shape == combine_weights_triton.shape
-    assert torch.allclose(combine_weights_torch, combine_weights_triton)
-    assert dispatch_mask_torch.shape == dispatch_mask_triton.shape
-    assert torch.allclose(dispatch_mask_torch, dispatch_mask_triton)
+    assert torch.allclose(output1_torch, output1_triton)
+    assert output2_torch.shape == output2_triton.shape
+    assert torch.allclose(output2_torch, output2_triton)
+    assert output3_torch.shape == output3_triton.shape
+    assert torch.allclose(output3_torch, output3_triton)
+    
+    # loss_torch = torch.mean(output1_torch * torch.sum(output2_torch + output3_torch, dim=0))
+    # loss_triton = torch.mean(output1_triton * torch.sum(output2_triton + output3_triton, dim=0))
+    
+    loss_torch = torch.sum(torch.mean(output1_torch * output2_torch))
+    loss_triton = torch.sum(torch.mean(output1_triton * output2_triton))
+    
+    assert torch.allclose(loss_torch, loss_triton)
+    
+    loss_torch.backward()
+    loss_triton.backward()
+    
+    assert logits_torch.grad.shape == logits_triton.grad.shape
+    assert torch.allclose(logits_torch.grad, logits_triton.grad)
+    
+    # l_aux_torch, combine_weights_torch, dispatch_mask_torch = top2gating(logits)
+    # l_aux_triton, combine_weights_triton, dispatch_mask_triton = Top2GatingFunc.apply(logits)
+    
+    # assert l_aux_torch.shape == l_aux_triton.shape
+    # assert torch.allclose(l_aux_torch, l_aux_triton)
+    # assert combine_weights_torch.shape == combine_weights_triton.shape
+    # assert torch.allclose(combine_weights_torch, combine_weights_triton)
+    # assert dispatch_mask_torch.shape == dispatch_mask_triton.shape
+    # assert torch.allclose(dispatch_mask_torch, dispatch_mask_triton)
 
 test()
