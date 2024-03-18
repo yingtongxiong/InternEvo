@@ -357,10 +357,10 @@ class TopKGate(Module):
             )
 
         else:
-            # gate_output = Top2GatingFunc.apply(logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity)
-            gate_output = top2gating(
-                logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity
-            )
+            gate_output = Top2GatingFunc.apply(logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity)
+            # gate_output = top2gating(
+            #     logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity
+            # )
 
         if self.wall_clock_breakdown:
             timer("TopKGate").stop()

@@ -6,7 +6,7 @@ import triton.language as tl
 @triton.jit
 def _fused_kernel1(
     logits1,
-    logits2,
+    noise,
     mask1, # output
     mask2,
     gates,
@@ -19,7 +19,6 @@ def _fused_kernel1(
     # each block process each row
     pid = tl.program_id(axis=0)
     logits1_col = tl.arange(0, BLOCK_SIZE_e)
-    logits2_col = tl.arange(0, BLOCK_SIZE_e)
     
     logits1_ptrs = logits1 + pid * stride_se_s + logits1_col
     gates_ptrs = gates + pid * stride_se_s + logits1_col
@@ -32,9 +31,10 @@ def _fused_kernel1(
     argmax1_output = tl.argmax(softmax1_output, axis=0)
     tl.store(gates_ptrs, softmax1_output, mask=logits1_col < e)
     
-    logits2_ptrs = logits2 + pid * stride_se_s + argmax1_output
-    logits2_ptrs = logits2 + pid * stride_se_s + logits2_col
-    logits2_data = tl.load(logits2_ptrs, mask=logits1_col < e and logits1_col != argmax1_output, other=fill_value)
+    noise_ptrs = noise + pid * stride_se_s + logits1_col
+    noise_data = tl.load(noise_ptrs, mask=logits1_col < e)# and logits1_col != argmax1_output, other=fill_value)
+    logits2_data = logits1_data + noise_data
+    logits2_data = tl.where(logits1_col != argmax1_output, logits2_data, fill_value)
     argmax2_output = tl.argmax(logits2_data, axis=0)
     
     # compute the output pointer
@@ -250,8 +250,8 @@ def fused_gating3(gates, input1, input2, mask1, mask2, c=1):
     return combine_weights, dispatch_mask
 
 
-def _fused_top2gating(logits, logits_w_noise, capacity):
-    mask1 = torch.zeros_like(logits).to(torch.int64)
+def _fused_top2gating(logits, noise, capacity):
+    mask1 =torch.zeros(logits.shape, device=logits.device, dtype=torch.int64)
     mask2 = torch.zeros_like(mask1)
     gates = torch.zeros_like(logits)
     
@@ -262,11 +262,23 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
     block_size_e = triton.next_power_of_2(e)
     fill_value = torch.finfo(logits.dtype).min
     
+    loca1 = torch.zeros_like(mask1)
+    loca2 = torch.zeros_like(mask2)
+    res = torch.zeros((e,)).to(mask1.device)
+    ce = torch.zeros_like(res)
+    
+    combine_weights = torch.zeros((s, e, capacity), device=gates.device)
+    dispatch_mask = torch.zeros((s, e, capacity), device=gates.device, dtype=torch.bool)
+    
+    stride_sec_s, stride_sec_e, _ = combine_weights.stride()
+    
+    min_value = torch.finfo(gates.dtype).eps
+    
     with torch.cuda.device(logits.device.index):
     
         _fused_kernel1[(s, )](
             logits,
-            logits_w_noise,
+            noise,
             mask1,
             mask2,
             gates,
@@ -275,11 +287,6 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
             e,
             BLOCK_SIZE_e=block_size_e,
         )
-        
-        loca1 = torch.zeros_like(mask1)
-        loca2 = torch.zeros_like(mask2)
-        res = torch.zeros((e,)).to(mask1.device)
-        ce = torch.zeros((e,)).to(mask1.device)
         
         _fused_kernel2[(e, )](
             gates,
@@ -294,13 +301,6 @@ def _fused_top2gating(logits, logits_w_noise, capacity):
             s=s, e=e,
             BLOCK_SIZE_s=block_size_s,
         )
-        
-        combine_weights = torch.zeros((s, e, capacity), device=gates.device)
-        dispatch_mask = torch.zeros((s, e, capacity), device=gates.device, dtype=torch.bool)
-        
-        stride_sec_s, stride_sec_e, _ = combine_weights.stride()
-        
-        min_value = torch.finfo(gates.dtype).eps
         
         _fused_kernel3[(s, )](
             gates,

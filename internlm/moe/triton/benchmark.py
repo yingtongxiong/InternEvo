@@ -6,7 +6,7 @@ from torch import Tensor
 
 from gating_triton import Top2GatingFunc, _capacity
 
-def top2gating(logits: Tensor, capacity_factor: float = 1.0, min_capacity: int = 2) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+def top2gating(logits: Tensor, noise: Tensor, capacity_factor: float = 1.0, min_capacity: int = 2) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     """Implements Top2Gating on logits."""
     # everything is in fp32 in this function
     capacity = _capacity(logits, torch.tensor(capacity_factor * 2), torch.tensor(min_capacity))
@@ -23,7 +23,8 @@ def top2gating(logits: Tensor, capacity_factor: float = 1.0, min_capacity: int =
     
     # Replace top-expert with min value
     # logits_except1 = logits_w_noise.masked_fill(mask1.bool(), torch.finfo(logits.dtype).min)
-    logits_except1 = logits.masked_fill(mask1.bool(), torch.finfo(logits.dtype).min)
+    logits_w_noise = logits + noise
+    logits_except1 = logits_w_noise.masked_fill(mask1.bool(), torch.finfo(logits.dtype).min)
     indices2_s = torch.argmax(logits_except1, dim=1)
     mask2 = F.one_hot(indices2_s, num_classes=num_experts)
     
@@ -81,13 +82,14 @@ def top2gating(logits: Tensor, capacity_factor: float = 1.0, min_capacity: int =
 
 class Top2Gating(torch.nn.Module):
     
-    def forward(self, logits, capacity_factor: float = 1.0, min_capacity: int = 2):
-        return top2gating(logits, capacity_factor, min_capacity)
+    def forward(self, logits, noise, capacity_factor: float = 1.0, min_capacity: int = 2):
+        return top2gating(logits, noise, capacity_factor, min_capacity)
 
 def test():
     device = torch.device('cuda:0')
     shape = (4096 * 2, 16)
     logits_torch = torch.randn(shape, device=device, requires_grad=True)
+    noise = torch.randn(shape, device=device)
     
     with torch.no_grad():
         logits_triton = logits_torch.clone()
@@ -97,8 +99,8 @@ def test():
     model_torch = Top2Gating()
     model_triton = Top2GatingFunc.apply
     
-    output1_torch, output2_torch, output3_torch = model_torch(logits_torch)
-    output1_triton, output2_triton, output3_triton = model_triton(logits_triton)
+    output1_torch, output2_torch, output3_torch = model_torch(logits_torch, noise)
+    output1_triton, output2_triton, output3_triton, _ = model_triton(logits_triton, noise)
     
     assert output1_torch.shape == output1_triton.shape
     # import pdb; pdb.set_trace()
@@ -133,3 +135,4 @@ def test():
     # assert torch.allclose(dispatch_mask_torch, dispatch_mask_triton)
 
 test()
+print("sucessfully!")

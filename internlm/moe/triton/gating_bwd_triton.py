@@ -91,7 +91,7 @@ def fused_bwd(grad_l_aux, grad_combine, loca1, loca2, mask1, mask2, gates, ce):
     stride_se_s, _ = mask1.stride()
     
     grad_logits = torch.zeros((s,e), device=grad_combine.device)
-    diag_mask = torch.diag(torch.ones(e)).to(device=grad_combine.device)
+    diag_mask = torch.diag(torch.ones(e, device=grad_combine.device))
     block_size_e = triton.next_power_of_2(e)
     
     with torch.cuda.device(grad_combine.device.index):

@@ -3,8 +3,8 @@ from typing import Callable, Dict, Optional, Tuple
 import torch
 from torch import Tensor
 
-from .gating_fwd_triton import _fused_top2gating
-from .gating_bwd_triton import fused_bwd
+from gating_fwd_triton import _fused_top2gating
+from gating_bwd_triton import fused_bwd
 
 # from gshard_moe import _capacity, gumbel_rsample
 gumbel_map: Dict[torch.device, Callable] = {}
@@ -33,13 +33,13 @@ def gumbel_rsample(shape: Tuple, device: torch.device) -> Tensor:
 class Top2GatingFunc(torch.autograd.Function):
     
     @staticmethod
-    def forward(ctx: torch.Any, logits: torch.Tensor, capacity_factor: float = 1.0, min_capacity: int = 2):
+    def forward(ctx: torch.Any, logits: torch.Tensor, noise: torch.Tensor, capacity_factor: float = 1.0, min_capacity: int = 2):
         # compute the capacity
         capacity = _capacity(logits, torch.tensor(capacity_factor * 2), torch.tensor(min_capacity)).item()
         # add noise to the original logits
-        logits_w_noise = logits + gumbel_rsample(logits.shape, device=logits.device)
+        # logits_w_noise = logits + gumbel_rsample(logits.shape, device=logits.device)
         
-        res, combine_weights, dispatch_mask, saved_tensors = _fused_top2gating(logits, logits_w_noise, capacity)
+        res, combine_weights, dispatch_mask, saved_tensors = _fused_top2gating(logits, noise, capacity)
         l_aux = torch.mean(res)
         ctx.save_for_backward(*saved_tensors)
         return l_aux, combine_weights, dispatch_mask, None
