@@ -3,8 +3,8 @@ from typing import Callable, Dict, Optional, Tuple
 import torch
 from torch import Tensor
 
-from gating_fwd_triton import _fused_top2gating
-from gating_bwd_triton import fused_bwd
+from .gating_fwd_triton import _fused_top2gating
+from .gating_bwd_triton import fused_bwd
 
 # from gshard_moe import _capacity, gumbel_rsample
 gumbel_map: Dict[torch.device, Callable] = {}
@@ -53,4 +53,4 @@ class Top2GatingFunc(torch.autograd.Function):
         
         grad_logits = fused_bwd(grad_l_aux, grad_combine, loca1, loca2, mask1, mask2, gates, ce)
         
-        return grad_logits, None, None
+        return grad_logits, None, None, None

@@ -264,7 +264,7 @@ def _fused_top2gating(logits, noise, capacity):
     
     loca1 = torch.zeros_like(mask1)
     loca2 = torch.zeros_like(mask2)
-    res = torch.zeros((e,)).to(mask1.device)
+    res = torch.zeros((e,), device=mask1.device)
     ce = torch.zeros_like(res)
     
     combine_weights = torch.zeros((s, e, capacity), device=gates.device)

@@ -357,7 +357,8 @@ class TopKGate(Module):
             )
 
         else:
-            gate_output = Top2GatingFunc.apply(logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity)
+            noise = gumbel_rsample(logits.shape, device=logits.device)
+            gate_output = Top2GatingFunc.apply(logits, noise, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity)
             # gate_output = top2gating(
             #     logits, self.capacity_factor if self.training else self.eval_capacity_factor, self.min_capacity
             # )
