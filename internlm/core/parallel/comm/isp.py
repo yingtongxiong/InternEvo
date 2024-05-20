@@ -19,8 +19,8 @@ from internlm.core.parallel.comm.utils import (
     DUMMY_HANDLE_CONST,
     AsyncCommHandle,
     all_gather_raw,
-    reduce_scatter_raw,
     expandKVPacked,
+    reduce_scatter_raw,
 )
 from internlm.model.modules.linear import ParallelLinearWithCommExt
 from internlm.utils.common import SchedulerHook, get_current_device
