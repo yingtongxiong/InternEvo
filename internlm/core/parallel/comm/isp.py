@@ -723,7 +723,8 @@ class DistributedAttention(nn.Module):
         # if the num head of kv is not enough to be splitted by sp
         # then we could copy the kv head
         if self.sp_size > num_head_kv:
-            kv = expandKVPacked(kv, self.sp_size, 3)
+            assert self.sp_size % num_head_kv == 0, "the num_head_kv should be divided by sp size."
+            kv = expandKVPacked(kv, self.sp_size // num_head_kv, 3)
         kv = _SeqAllToAll.apply(self.spg, kv, 3, 1)
 
         context = self.local_attn(q, kv, **kwargs)
