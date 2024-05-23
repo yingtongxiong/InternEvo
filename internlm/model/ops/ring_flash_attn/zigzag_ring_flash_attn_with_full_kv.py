@@ -23,14 +23,20 @@ def zigzag_ring_flash_attn_forward(
     comm = RingComm(process_group)
 
     block_seq_len = q.shape[1] // 2
-    q1 = q[:, block_seq_len:]
 
     out = None
     lse = None
     # next_k, next_v = None, None
     # full_k = [k0, k7, k1, k6, k2, k5, k3, k4]
-    full_k, handle_full_k = all_gather_raw(k, process_group, async_op=True, gather_dim=1)
-    full_v, handle_full_v = all_gather_raw(v, process_group, async_op=True, gather_dim=1)
+    
+    head_chunks = 2
+    
+    k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
+    v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
+    
+    
+    # full_k, handle_full_k = all_gather_raw(k, process_group, async_op=True, gather_dim=1)
+    # full_v, handle_full_v = all_gather_raw(v, process_group, async_op=True, gather_dim=1)
 
     def forward(q, k, v, causal):
         block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(
@@ -49,50 +55,87 @@ def zigzag_ring_flash_attn_forward(
             return comm.world_size - 1
         else:
             return prev_idx - 1
+    
+    def _head_forward(k, v, q):
+        
+        out = None
+        lse = None
 
-    for step in range(comm.world_size):
+        for step in range(comm.world_size):
+        
+            # # import pdb;pdb.set_trace()
+            # if step + 1 != comm.world_size:
+            #     next_k: torch.Tensor = comm.send_recv(k)
+            #     next_v: torch.Tensor = comm.send_recv(v)
+            #     comm.commit()
 
-        # # import pdb;pdb.set_trace()
-        # if step + 1 != comm.world_size:
-        #     next_k: torch.Tensor = comm.send_recv(k)
-        #     next_v: torch.Tensor = comm.send_recv(v)
-        #     comm.commit()
+            # if step == 1:
+            #     handle_k_cur.wait()
+            #     handle_v_cur.wait()
+                
 
-        if step == 1:
-            handle_full_v.wait()
-            handle_full_k.wait()
+            # full_k = [k0, k7, k1, k6, k2, k5, k3, k4]
 
-        # full_k = [k0, k7, k1, k6, k2, k5, k3, k4]
+            if step == 0:
+                cur_kv_idx = comm.rank
+                block_out, block_lse = forward(q, k, v, causal=True)
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            elif step <= comm.rank:
+                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k0 = k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                v0 = v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                block_out, block_lse = forward(q, k0, v0, causal=False)
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            else:
+                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k = k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                v = v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                q1 = q[:, block_seq_len:]
+                block_out, block_lse = forward(q1, k, v, causal=False)
+                out, lse = update_out_and_lse(
+                    out,
+                    lse,
+                    block_out,
+                    block_lse,
+                    slice_=(slice(None), slice(block_seq_len, None)),
+                )
 
-        if step == 0:
-            cur_kv_idx = comm.rank
-            block_out, block_lse = forward(q, k, v, causal=True)
-            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
-        elif step <= comm.rank:
-            cur_kv_idx = get_next_kv_idx(cur_kv_idx)
-            k0 = full_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
-            v0 = full_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
-            block_out, block_lse = forward(q, k0, v0, causal=False)
-            out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            # if step + 1 != comm.world_size:
+            #     comm.wait()
+            #     k = next_k
+            #     v = next_v
+            return out, lse
+    
+    outs = []
+    lses = []
+    
+    head_step = k.shape[-2] // head_chunks
+    
+    for i in range(head_chunks):
+        
+        if i == 0:
+            # all gather the first part of k_splits ,v_splits
+            k_cur, handle_k_cur = all_gather_raw(k_splits[i], process_group, async_op=True, gather_dim=1)
+            v_cur, handle_v_cur = all_gather_raw(v_splits[i], process_group, async_op=True, gather_dim=1)
+            handle_k_cur.wait()
+            handle_v_cur.wait()
         else:
-            cur_kv_idx = get_next_kv_idx(cur_kv_idx)
-            k = full_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
-            v = full_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
-            block_out, block_lse = forward(q1, k, v, causal=False)
-            out, lse = update_out_and_lse(
-                out,
-                lse,
-                block_out,
-                block_lse,
-                slice_=(slice(None), slice(block_seq_len, None)),
-            )
+            handle_k_next.wait()
+            handle_v_next.wait()
+            k_cur = k_next
+            v_cur = v_next
 
-        # if step + 1 != comm.world_size:
-        #     comm.wait()
-        #     k = next_k
-        #     v = next_v
-    out = out.to(q.dtype)
-    lse = lse.squeeze(dim=-1).transpose(1, 2)
+        # all gather the next part of k_splits, v_splits
+        if i != head_chunks - 1:
+            k_next, handle_k_next = all_gather_raw(k_splits[i + 1], process_group, async_op=True, gather_dim=1)
+            v_next, handle_v_next = all_gather_raw(v_splits[i + 1], process_group, async_op=True, gather_dim=1)
+        
+        out, lse = _head_forward(k_cur, v_cur, q[..., i * head_step : (i + 1) * head_step ,:])
+        outs.append(out)
+        lses.append(lse)
+    
+    out = torch.cat(outs, dim=-2).to(q.dtype)
+    lse = torch.cat(lses, dim=-2).squeeze(dim=-1).transpose(1, 2)
     return out, lse
 
 
