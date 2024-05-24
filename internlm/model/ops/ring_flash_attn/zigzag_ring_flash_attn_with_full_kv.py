@@ -79,7 +79,14 @@ def zigzag_ring_flash_attn_forward(
 
         return out, lse
 
-    head_chunks = 2
+    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    if head_overlap_enable:
+        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
+        assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
+    else:
+        head_chunks = 1
+    
     head_step = k.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
@@ -140,7 +147,14 @@ def zigzag_ring_flash_attn_backward_full_kv(
     kv_comm = RingComm(process_group)
     d_kv_comm = RingComm(process_group)
 
-    head_chunks = 2
+    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    if head_overlap_enable:
+        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
+        assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
+    else:
+        head_chunks = 1
+    
     head_step = k.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
@@ -296,7 +310,14 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
     assert causal is True, "zigzag ring is meaningless for causal=False"
     kv_comm = RingComm(process_group)
 
-    head_chunks = 2
+    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    if head_overlap_enable:
+        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
+        assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
+    else:
+        head_chunks = 1
+    
     head_step = k.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
