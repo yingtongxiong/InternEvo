@@ -83,10 +83,10 @@ def zigzag_ring_flash_attn_forward(
     head_step = k.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
-    
+
     outs = []
     lses = []
-    
+
     for i in range(head_chunks):
         if i == 0:
             k_cur, handle_k_cur = all_gather_raw(k_splits[i], process_group, async_op=True, gather_dim=1)
@@ -94,7 +94,7 @@ def zigzag_ring_flash_attn_forward(
             handle_k_cur.wait()
             handle_v_cur.wait()
         else:
-            handle_k_next.wait() 
+            handle_k_next.wait()
             handle_v_next.wait()
             k_cur = k_next
             v_cur = v_next
@@ -222,8 +222,8 @@ def zigzag_ring_flash_attn_backward_full_kv(
                 dk, dv = next_dk, next_dv
 
                 if step <= kv_comm.rank:
-                    dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len] # pylint: disable=E1137
-                    dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len] # pylint: disable=E1137
+                    dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len]  # pylint: disable=E1137
+                    dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len]  # pylint: disable=E1137
                 else:
                     dk += dk_buffer
                     dv += dv_buffer
@@ -372,7 +372,7 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                     softmax_lse1 = head_softmax_lse.chunk(2, dim=2)[1].contiguous()
                     backward(dout1, q1, k1, v1, out1, softmax_lse1, causal=False)
                     # always use the first half in dq_buffer.
-                    dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len] # pylint: disable=E1137
+                    dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
 
                 if step <= kv_comm.rank:
                     full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] = dk_buffer[
