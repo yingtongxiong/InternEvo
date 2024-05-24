@@ -29,7 +29,8 @@ class RandomDataset(Dataset):
                     r *= 2
                     d = list(range(n)) * r
 
-            # d = [n, r] + d
+            r = r % 103168
+            d = [n, r] + d
             d = d[:max_len]
             data.append(d)
             lengths.append(len(d))

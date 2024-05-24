@@ -179,6 +179,7 @@ def zigzag_ring_flash_attn_backward_full_kv(
             dv = dv_buffer.to(torch.float32)
         else:
             if step <= kv_comm.rank:
+                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
                 k0 = full_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
                 v0 = full_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
                 backward(dout, q, k0, v0, out, softmax_lse, causal=False)
@@ -291,10 +292,10 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
         if step == 1:
             handle_full_v.wait()
             handle_full_k.wait()
-            full_dk = torch.empty_like(full_k, dtype=torch.float32)
-            full_dv = torch.empty_like(full_v, dtype=torch.float32)
-            full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len].copy_(dk)
-            full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len].copy_(dv)
+            full_dk = torch.zeros_like(full_k, dtype=torch.float32)
+            full_dv = torch.zeros_like(full_v, dtype=torch.float32)
+            full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dk
+            full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv
 
         if step == 0:
             cur_kv_idx = kv_comm.rank
@@ -322,19 +323,11 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
             # dk, dv = next_dk, next_dv
 
             if step <= kv_comm.rank:
-                full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len].copy_(
-                    dk_buffer[:, :block_seq_len].to(torch.float32)
-                )
-                full_dv[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len].copy_(
-                    dv_buffer[:, :block_seq_len].to(torch.float32)
-                )
+                full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dk_buffer[:, :block_seq_len].to(torch.float32)
+                full_dv[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dv_buffer[:, :block_seq_len].to(torch.float32)
             else:
-                full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len].copy_(
-                    dk_buffer.to(torch.float32)
-                )
-                full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len].copy_(
-                    dv_buffer.to(torch.float32)
-                )
+                full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dk_buffer.to(torch.float32)
+                full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv_buffer.to(torch.float32)
 
         # if step + 1 != kv_comm.world_size:
         #     kv_comm.wait()
