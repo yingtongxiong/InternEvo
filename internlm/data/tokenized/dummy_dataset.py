@@ -4,6 +4,7 @@
 import numpy as np
 from torch.utils.data import Dataset
 
+from internlm.core.context.parallel_context import global_context as gpc
 
 class RandomDataset(Dataset):
     """
@@ -29,7 +30,7 @@ class RandomDataset(Dataset):
                     r *= 2
                     d = list(range(n)) * r
 
-            r = r % 103168
+            r = r % gpc.config.VOCAB_SIZE
             d = [n, r] + d
             d = d[:max_len]
             data.append(d)
