@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 
 from internlm.core.context.parallel_context import global_context as gpc
 
+
 class RandomDataset(Dataset):
     """
     RandomDataset for generating random dataset.
