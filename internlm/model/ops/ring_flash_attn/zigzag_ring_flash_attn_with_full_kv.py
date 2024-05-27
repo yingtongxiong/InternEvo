@@ -111,12 +111,14 @@ def zigzag_ring_flash_attn_forward(
             v_next, handle_v_next = all_gather_raw(v_splits[i + 1], process_group, async_op=True, gather_dim=1)
 
         out, lse = _head_forward(q[..., i * head_step : (i + 1) * head_step, :], k_cur, v_cur)
+        
+        lse = lse.squeeze(dim=-1).transpose(1, 2)
 
         outs.append(out)
         lses.append(lse)
 
     out = torch.cat(outs, dim=-2).to(q.dtype)
-    lse = torch.cat(lses, dim=-2).squeeze(dim=-1).transpose(1, 2)
+    lse = torch.cat(lses, dim=-2)
     return out, lse
 
 
@@ -219,14 +221,14 @@ def zigzag_ring_flash_attn_backward_full_kv(
                     backward(head_dout, head_q, k0, v0, head_out, head_softmax_lse, causal=False)
                     dq += dq_buffer
                 else:
-                    k1 = head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
-                    v1 = head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                    k = head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                    v = head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
 
                     dout1 = head_dout.chunk(2, dim=1)[1]
                     q1 = head_q.chunk(2, dim=1)[1]
                     out1 = head_out.chunk(2, dim=1)[1]
                     softmax_lse1 = head_softmax_lse.chunk(2, dim=2)[1].contiguous()
-                    backward(dout1, q1, k1, v1, out1, softmax_lse1, causal=False)
+                    backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
 
                     # always use the first half in dq_buffer.
                     dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
@@ -374,8 +376,8 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                 dq = dq_buffer.to(torch.float32)
                 dk = dk_buffer.to(torch.float32)
                 dv = dv_buffer.to(torch.float32)
-                full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] = dk
-                full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] = dv
+                full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dk
+                full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv
             else:
                 if step <= kv_comm.rank:
                     cur_kv_idx = get_next_kv_idx(cur_kv_idx)
@@ -396,18 +398,18 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                     dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
 
                 if step <= kv_comm.rank:
-                    full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] = dk_buffer[
+                    full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dk_buffer[
                         :, :block_seq_len
                     ].to(torch.float32)
 
-                    full_dv[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] = dv_buffer[
+                    full_dv[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dv_buffer[
                         :, :block_seq_len
                     ].to(torch.float32)
                 else:
-                    full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] = dk_buffer.to(
+                    full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dk_buffer.to(
                         torch.float32
                     )
-                    full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] = dv_buffer.to(
+                    full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv_buffer.to(
                         torch.float32
                     )
 
@@ -442,7 +444,7 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
             k_cur,
             v_cur,
             out[..., i * head_step : (i + 1) * head_step, :],
-            softmax_lse[..., i * head_step : (i + 1) * head_step, :],
+            softmax_lse[:, i * head_step : (i + 1) * head_step, :],
         )
 
         dqs.append(dq)
