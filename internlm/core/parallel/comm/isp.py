@@ -6,7 +6,7 @@ communication for isp parallel.
 
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Callable, Dict, List, Tuple, Union, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import distributed as dist
@@ -14,6 +14,7 @@ from torch import nn
 
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
+from internlm.core.context.globals import PROCESS_GROUP
 from internlm.core.naive_amp import unwrap_naive_amp
 from internlm.core.parallel.comm.utils import (
     DUMMY_HANDLE_CONST,
@@ -30,8 +31,6 @@ from internlm.utils.utils import (
     check_attention_argument,
     params_dispatch_with_condition,
 )
-
-from internlm.core.context.globals import PROCESS_GROUP
 
 
 # not really useful, only for code hint.
@@ -631,9 +630,15 @@ class ISPCommunicatorSchedulerHook(SchedulerHook):
 class _SeqAllToAll(torch.autograd.Function):
     "sequence alltoall function"
 
-    @staticmethod 
-    def forward(ctx, group: dist.ProcessGroup, scatter_idx: Optional[Union[List[int], int]], gather_idx: Optional[Union[List[int], int]], *input_: torch.Tensor) -> torch.Tensor:
- 
+    @staticmethod
+    def forward(
+        ctx,
+        group: dist.ProcessGroup,
+        scatter_idx: Optional[Union[List[int], int]],
+        gather_idx: Optional[Union[List[int], int]],
+        *input_: torch.Tensor,
+    ) -> torch.Tensor:
+
         if dist.get_world_size(group) <= 1:
             return input_
 
@@ -641,35 +646,37 @@ class _SeqAllToAll(torch.autograd.Function):
         ctx.scatter_idx = scatter_idx
         ctx.gather_idx = gather_idx
         seq_world_size = dist.get_world_size(group)
-        
+
         if len(input_) == 1:
             input_list = [t.contiguous() for t in torch.tensor_split(input_[0], seq_world_size, scatter_idx)]
             output_list = [torch.empty_like(input_list[0]) for _ in range(seq_world_size)]
             # TODO: use all_to_all_single instead
             dist.all_to_all(output_list, input_list, group=group)
             return torch.cat(output_list, dim=gather_idx).contiguous()
-        
+
         outputs = []
-        
+
         for i in range(len(input_)):
-            
+
             if i == 0:
                 input_list = [t.contiguous() for t in torch.tensor_split(input_[i], seq_world_size, scatter_idx[i])]
                 output_list = [torch.empty_like(input_list[0]) for _ in range(seq_world_size)]
-            
+
             handle_last = dist.all_to_all(output_list, input_list, group=group, async_op=True)
-            
+
             # conduct the next all2all
             if i + 1 < len(input_):
-                input_list_next = [t.contiguous() for t in torch.tensor_split(input_[i + 1], seq_world_size, scatter_idx[i + 1])]
+                input_list_next = [
+                    t.contiguous() for t in torch.tensor_split(input_[i + 1], seq_world_size, scatter_idx[i + 1])
+                ]
                 output_list_next = [torch.empty_like(input_list_next[0]) for _ in range(seq_world_size)]
             handle_last.wait()
             outputs.append(torch.cat(output_list, dim=gather_idx[i]).contiguous())
-            
+
             if i + 1 < len(input_):
                 input_list = input_list_next
                 output_list = output_list_next
-        
+
         return tuple(outputs)
 
     @staticmethod
@@ -678,11 +685,9 @@ class _SeqAllToAll(torch.autograd.Function):
             return (None, *grad_output, None, None)
         if len(grad_output) == 1:
             return (None, None, None, _SeqAllToAll.apply(ctx.group, ctx.gather_idx, ctx.scatter_idx, *grad_output))
-        
+
         return (None, None, None, *_SeqAllToAll.apply(ctx.group, ctx.gather_idx, ctx.scatter_idx, *grad_output))
 
-
-    
 
 # adpated from https://github.com/microsoft/DeepSpeed/blob/master/deepspeed/sequence/layer.py
 class DistributedAttention(nn.Module):
@@ -760,8 +765,8 @@ class DistributedAttention(nn.Module):
         # then we could copy the kv head
         if self.sp_size > num_head_kv:
             assert self.sp_size % num_head_kv == 0, "the num_head_kv should be divided by sp size."
-            kv = expandKVPacked(kv, self.sp_size // num_head_kv, 3) 
-        q, kv = _SeqAllToAll.apply(self.spg, [2, 3], [1, 1], q, kv)   
+            kv = expandKVPacked(kv, self.sp_size // num_head_kv, 3)
+        q, kv = _SeqAllToAll.apply(self.spg, [2, 3], [1, 1], q, kv)
         context = self.local_attn(q, kv, **kwargs)
         context = _SeqAllToAll.apply(self.spg, 1, 2, context)
 
