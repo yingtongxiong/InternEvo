@@ -387,13 +387,13 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                     dq += dq_buffer
                 else:
                     cur_kv_idx = get_next_kv_idx(cur_kv_idx)
-                    k1 = head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
-                    v1 = head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                    k = head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                    v = head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
                     dout1 = head_dout.chunk(2, dim=1)[1]
                     q1 = head_q.chunk(2, dim=1)[1]
                     out1 = head_out.chunk(2, dim=1)[1]
                     softmax_lse1 = head_softmax_lse.chunk(2, dim=2)[1].contiguous()
-                    backward(dout1, q1, k1, v1, out1, softmax_lse1, causal=False)
+                    backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
                     # always use the first half in dq_buffer.
                     dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
 
