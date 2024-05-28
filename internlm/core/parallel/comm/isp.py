@@ -661,8 +661,7 @@ class _SeqAllToAll(torch.autograd.Function):
             if i == 0:
                 input_list = [t.contiguous() for t in torch.tensor_split(input_[i], seq_world_size, scatter_idx[i])]
                 output_list = [torch.empty_like(input_list[0]) for _ in range(seq_world_size)]
-
-            handle_last = dist.all_to_all(output_list, input_list, group=group, async_op=True)
+                handle_last = dist.all_to_all(output_list, input_list, group=group, async_op=True)
 
             # conduct the next all2all
             if i + 1 < len(input_):
@@ -670,10 +669,14 @@ class _SeqAllToAll(torch.autograd.Function):
                     t.contiguous() for t in torch.tensor_split(input_[i + 1], seq_world_size, scatter_idx[i + 1])
                 ]
                 output_list_next = [torch.empty_like(input_list_next[0]) for _ in range(seq_world_size)]
+                handle_next = dist.all_to_all(output_list_next, input_list_next, group=group, async_op=True)
+
             handle_last.wait()
+
             outputs.append(torch.cat(output_list, dim=gather_idx[i]).contiguous())
 
             if i + 1 < len(input_):
+                handle_last = handle_next
                 input_list = input_list_next
                 output_list = output_list_next
 
