@@ -174,6 +174,192 @@ def zigzag_ring_flash_attn_forward(
 
     out = torch.cat(outs, dim=-2).to(q.dtype)
     lse = torch.cat(lses, dim=-2)
+    if gpc.get_global_rank() == 0:
+        print(f"xyt lse = {lse}", flush=True)
+    return out, lse
+
+def zigzag_ring_flash_attn_forward_stream(
+    ring_pg,
+    p2p_pg,
+    all_gather_pg,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    softmax_scale,
+    dropout_p=0,
+    causal=True,
+    window_size=(-1, -1),  # pylint: disable=W0613
+    alibi_slopes=None,  # pylint: disable=W0613
+    deterministic=False,  # pylint: disable=W0613
+):
+    assert causal is True, "zigzag ring is meaningless for causal=False"
+    ring_comm = RingComm(ring_pg)
+    p2p_comm = RingComm(p2p_pg)
+    
+    all_gather_ws = torch.distributed.get_world_size(all_gather_pg)
+    all_gather_local_rank = torch.distributed.get_rank(all_gather_pg)
+
+    block_seq_len = q.shape[1] // 2
+
+    def forward(q, k, v, causal):
+        block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(
+            q,
+            k,
+            v,
+            dropout_p,
+            softmax_scale,
+            causal=causal,
+            return_softmax=True and dropout_p > 0,
+        )
+        return block_out, block_lse
+
+    def get_next_kv_idx(prev_idx) -> int:
+        if prev_idx == 0:
+            return all_gather_ws - 1
+        else:
+            return prev_idx - 1
+
+
+    def _head_first_window_forward(q, full_k, full_v):
+        out = None
+        lse = None
+
+        for step in range(all_gather_ws):
+
+            if step == 0:
+                cur_kv_idx = all_gather_local_rank
+                block_out, block_lse = forward(
+                    q,
+                    full_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len],
+                    full_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len],
+                    causal=True,
+                )
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            elif step <= all_gather_local_rank:
+                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k0 = full_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                v0 = full_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                block_out, block_lse = forward(q, k0, v0, causal=False)
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            else:
+                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k = full_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                v = full_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                q1 = q[:, block_seq_len:]
+                block_out, block_lse = forward(q1, k, v, causal=False)
+                out, lse = update_out_and_lse(
+                    out,
+                    lse,
+                    block_out,
+                    block_lse,
+                    slice_=(slice(None), slice(block_seq_len, None)),
+                )
+
+        return out, lse
+    
+    
+    def _head_other_window_forward(out, lse, q, full_k, full_v, window_num_idx):
+        
+        if window_num_idx > p2p_comm.rank:
+            
+            for step in range(all_gather_ws):
+                if step == 0:
+                    cur_kv_idx = all_gather_local_rank
+                else:
+                    cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k = full_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                v = full_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                q1 = q[:, block_seq_len:]
+                block_out, block_lse = forward(q1, k, v, causal=False)
+                out, lse = update_out_and_lse(
+                    out,
+                    lse,
+                    block_out,
+                    block_lse,
+                    slice_=(slice(None), slice(block_seq_len, None)),
+                )
+        else:
+            for step in range(all_gather_ws):
+                if step == 0:
+                    cur_kv_idx = all_gather_local_rank
+                else:
+                    cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k0 = full_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                v0 = full_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                block_out, block_lse = forward(q, k0, v0, causal=False)
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+
+        return out, lse
+        
+
+    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    if head_overlap_enable:
+        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
+        assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
+    else:
+        head_chunks = 1
+    
+    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_num = ring_comm.world_size // window_size
+    
+    head_step = k.shape[-2] // head_chunks
+    k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
+    v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
+
+    outs = []
+    lses = []
+    
+    comm_stream = torch.cuda.Stream()
+    comm_event = torch.cuda.Event()
+    compute_event = torch.cuda.Event()
+
+    for i in range(head_chunks):
+        
+        local_k = k_splits[i]
+        local_v = v_splits[i]
+        
+        for j in range(window_num):
+            
+            if j == 0:
+                full_k, _ = all_gather_raw(local_k, all_gather_pg, async_op=False, gather_dim=1)
+                full_v, _ = all_gather_raw(local_v, all_gather_pg, async_op=False, gather_dim=1)
+                torch.cuda.current_stream().record_event(compute_event)
+            else:
+                torch.cuda.current_stream().wait_event(comm_event)
+                local_k = next_k
+                local_v = next_v
+                full_k = full_k_next
+                full_v = full_v_next
+            
+            if j + 1 != window_num:
+                with torch.cuda.stream(comm_stream):
+                    comm_stream.wait_event(compute_event)
+                    next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous())
+                    next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous())
+                    p2p_comm.commit()
+                    p2p_comm.wait()
+                    full_k_next, _ = all_gather_raw(next_k, all_gather_pg, async_op=False, gather_dim=1)
+                    full_v_next, _ = all_gather_raw(next_v, all_gather_pg, async_op=False, gather_dim=1)
+                    comm_stream.record_event(comm_event)
+            
+            if j == 0:
+                out, lse = _head_first_window_forward(q[..., i * head_step : (i + 1) * head_step, :], full_k, full_v)
+            else:
+                out, lse = _head_other_window_forward(out, lse, q[..., i * head_step : (i + 1) * head_step, :], full_k, full_v, window_num_idx=j)
+            
+            torch.cuda.current_stream().record_event(compute_event)
+
+        lse = lse.squeeze(dim=-1).transpose(1, 2)
+        
+        outs.append(out)
+        lses.append(lse)
+
+    out = torch.cat(outs, dim=-2).to(q.dtype)
+    lse = torch.cat(lses, dim=-2)
+    
+    if gpc.get_global_rank() == 0:
+        print(f"xyt lse = {lse}", flush=True)
     return out, lse
 
 def zigzag_double_ring_flash_attn_forward(
@@ -405,6 +591,7 @@ def zigzag_ring_flash_attn_backward_full_kv(
     def backward(dout, q, k, v, out, softmax_lse, causal):
         seqlen_q = q.shape[1]
         seqlen_kv = k.shape[1]
+        softmax_lse = softmax_lse.contiguous()
         _flash_attn_backward(
             dout,
             q,
