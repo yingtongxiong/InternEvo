@@ -464,7 +464,7 @@ def args_sanity_check():
     
     # ring attention head overlap
     if  "ring_attn_head_overlap" not in gpc.config:
-        gpc.config._add_item("ring_attn_head_overlap", {'enable': False, 'head_chunks':1})
+        gpc.config._add_item("ring_attn_head_overlap", {'enable': False, 'head_chunks':1, 'window_size':1})
 
 
 def launch(

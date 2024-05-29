@@ -13,11 +13,12 @@ NUM_LAYER = 2
 
 uly_sp=1
 ring_sp=8
-use_ring_attn="full_kv_zigzag"  # none, basic, zigzag, full_kv_zigzag
-full_kv_zigzag_with_full_dkv=True
+use_ring_attn="sliding_window_zigzag"  # none, basic, zigzag, full_kv_zigzag, sliding_window_zigzag
+full_kv_zigzag_with_full_dkv=False
 ring_attn_head_overlap=dict(
     enable=True,
     head_chunks=2, # when enable is True, the head_chunks should be > 1  
+    window_size=4,
 ) # it makes sense when the use_ring_attn="full_kv_zigzag"
 
 
