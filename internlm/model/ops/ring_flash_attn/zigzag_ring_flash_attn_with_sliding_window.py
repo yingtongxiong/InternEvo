@@ -176,6 +176,180 @@ def zigzag_ring_flash_attn_forward(
     lse = torch.cat(lses, dim=-2)
     return out, lse
 
+def zigzag_double_ring_flash_attn_forward(
+    ring_pg,
+    p2p_pg,
+    local_p2p_pg,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    softmax_scale,
+    dropout_p=0,
+    causal=True,
+    window_size=(-1, -1),  # pylint: disable=W0613
+    alibi_slopes=None,  # pylint: disable=W0613
+    deterministic=False,  # pylint: disable=W0613
+):
+    assert causal is True, "zigzag ring is meaningless for causal=False"
+    ring_comm = RingComm(ring_pg)
+    p2p_comm = RingComm(p2p_pg)
+    local_p2p_comm = RingComm(local_p2p_pg)
+
+    block_seq_len = q.shape[1] // 2
+
+    def forward(q, k, v, causal):
+        block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(
+            q,
+            k,
+            v,
+            dropout_p,
+            softmax_scale,
+            causal=causal,
+            return_softmax=True and dropout_p > 0,
+        )
+        return block_out, block_lse
+
+
+    def _head_first_window_forward(q, k, v):
+        out = None
+        lse = None
+
+        for step in range(local_p2p_comm.world_size):
+
+            if step + 1 != local_p2p_comm.world_size:
+                next_k: torch.Tensor = local_p2p_comm.send_recv(k)
+                next_v: torch.Tensor = local_p2p_comm.send_recv(v)
+                local_p2p_comm.commit()
+            
+            if step == 0:
+                block_out, block_lse = forward(
+                    q,
+                    k,
+                    v,
+                    causal=True,
+                )
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            elif step <= local_p2p_comm.rank:
+                k0 = k[:, : block_seq_len]
+                v0 = v[:, : block_seq_len]
+                block_out, block_lse = forward(q, k0, v0, causal=False)
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+            else:
+                q1 = q[:, block_seq_len:]
+                block_out, block_lse = forward(q1, k, v, causal=False)
+                out, lse = update_out_and_lse(
+                    out,
+                    lse,
+                    block_out,
+                    block_lse,
+                    slice_=(slice(None), slice(block_seq_len, None)),
+                )
+            
+            if step + 1 != local_p2p_comm.world_size:
+                local_p2p_comm.wait()
+                k = next_k
+                v = next_v
+
+        return out, lse
+    
+    
+    def _head_other_window_forward(out, lse, q, k, v, window_num_idx):
+        
+        if window_num_idx > p2p_comm.rank:
+            
+            for step in range(local_p2p_comm.world_size):
+                
+                if step + 1 != local_p2p_comm.world_size:
+                    next_k: torch.Tensor = local_p2p_comm.send_recv(k)
+                    next_v: torch.Tensor = local_p2p_comm.send_recv(v)
+                    local_p2p_comm.commit()
+
+                q1 = q[:, block_seq_len:]
+                block_out, block_lse = forward(q1, k, v, causal=False)
+                out, lse = update_out_and_lse(
+                    out,
+                    lse,
+                    block_out,
+                    block_lse,
+                    slice_=(slice(None), slice(block_seq_len, None)),
+                )
+                
+                if step + 1 != local_p2p_comm.world_size:
+                    local_p2p_comm.wait()
+                    k = next_k
+                    v = next_v
+        else:
+            for step in range(local_p2p_comm.world_size):
+                
+                if step + 1 != local_p2p_comm.world_size:
+                    next_k: torch.Tensor = local_p2p_comm.send_recv(k)
+                    next_v: torch.Tensor = local_p2p_comm.send_recv(v)
+                    local_p2p_comm.commit()
+
+                k0 = k[:,  : block_seq_len]
+                v0 = v[:,  : block_seq_len]
+                block_out, block_lse = forward(q, k0, v0, causal=False)
+                out, lse = update_out_and_lse(out, lse, block_out, block_lse)
+                
+                if step + 1 != local_p2p_comm.world_size:
+                    local_p2p_comm.wait()
+                    k = next_k
+                    v = next_v
+        return out, lse
+        
+
+    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    if head_overlap_enable:
+        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
+        assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
+    else:
+        head_chunks = 1
+    
+    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_num = ring_comm.world_size // window_size
+    
+    head_step = k.shape[-2] // head_chunks
+    k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
+    v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
+
+    outs = []
+    lses = []
+
+    for i in range(head_chunks):
+        
+        local_k = k_splits[i]
+        local_v = v_splits[i]
+        
+        for j in range(window_num):
+            
+            if j > 0:
+                p2p_comm.wait()
+                local_k = next_k
+                local_v = next_v
+            
+            if j + 1 != window_num:
+                next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous())
+                next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous())
+                p2p_comm.commit()
+
+            if j == 0:
+                # out, lse = _head_first_window_forward(q[..., i * head_step : (i + 1) * head_step, :], local_k, local_v)
+                out, lse = _head_first_window_forward(q, local_k, local_v)
+            else:
+                out, lse = _head_other_window_forward(out, lse, q[..., i * head_step : (i + 1) * head_step, :], local_k, local_v, window_num_idx=j)
+        
+        lse = lse.squeeze(dim=-1).transpose(1, 2)
+        out = out.to(q.dtype)
+        
+    #     outs.append(out)
+    #     lses.append(lse)
+
+    # out = torch.cat(outs, dim=-2).to(q.dtype).contiguous()
+    # lse = torch.cat(lses, dim=-2).contiguous()
+    return out, lse
+
+
 
 def create_buffer(tensor, head_chunks, dim):
     buffer_shape = list(tensor.shape)
