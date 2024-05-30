@@ -357,9 +357,7 @@ def zigzag_ring_flash_attn_forward_stream(
 
     out = torch.cat(outs, dim=-2).to(q.dtype)
     lse = torch.cat(lses, dim=-2)
-    
-    if gpc.get_global_rank() == 0:
-        print(f"xyt lse = {lse}", flush=True)
+
     return out, lse
 
 def zigzag_double_ring_flash_attn_forward(
@@ -709,7 +707,9 @@ def zigzag_ring_flash_attn_backward_full_kv(
 
 
 def zigzag_ring_flash_attn_backward_full_kv_dkv(
-    process_group,
+    ring_pg,
+    p2p_pg,
+    all_gather_pg,
     dout,
     q,
     k,
@@ -726,7 +726,11 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
     if gpc.get_global_rank() == 0:
         print("full_kv_zigzag_with_full_dkv = True", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
-    kv_comm = RingComm(process_group)
+    
+    all_gather_comm = RingComm(all_gather_pg)
+    p2p_comm = RingComm(p2p_pg)
+    ring_comm = RingComm(ring_pg)
+    dkv_comm = RingComm(p2p_pg)
 
     head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
     if head_overlap_enable:
@@ -748,10 +752,10 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
 
     def get_next_kv_idx(prev_idx) -> int:
         if prev_idx == 0:
-            return kv_comm.world_size - 1
+            return all_gather_comm.world_size - 1
         else:
             return prev_idx - 1
-
+    
     def backward(dout, q, k, v, out, softmax_lse, causal):
         seqlen_q = q.shape[1]
         seqlen_kv = k.shape[1]
@@ -769,17 +773,17 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
             softmax_scale,
             causal,
         )
-
-    def _head_backward(head_dout, head_q, head_k, head_v, head_out, head_softmax_lse):
-
+    
+    def _head_first_window_backward(head_dout, head_q, head_k, head_v, head_out, head_softmax_lse):
+        
         full_dk = torch.zeros_like(head_k, dtype=torch.float32)
         full_dv = torch.zeros_like(head_v, dtype=torch.float32)
         dq, dk, dv = None, None, None
 
-        for step in range(kv_comm.world_size):
+        for step in range(all_gather_comm.world_size):
 
             if step == 0:
-                cur_kv_idx = kv_comm.rank
+                cur_kv_idx = all_gather_comm.rank
                 backward(
                     head_dout,
                     head_q,
@@ -795,7 +799,7 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                 full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dk
                 full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv
             else:
-                if step <= kv_comm.rank:
+                if step <= all_gather_comm.rank:
                     cur_kv_idx = get_next_kv_idx(cur_kv_idx)
                     k0 = head_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
                     v0 = head_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
@@ -813,7 +817,7 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                     # always use the first half in dq_buffer.
                     dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
 
-                if step <= kv_comm.rank:
+                if step <= all_gather_comm.rank:
                     full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dk_buffer[
                         :, :block_seq_len
                     ].to(torch.float32)
@@ -829,55 +833,156 @@ def zigzag_ring_flash_attn_backward_full_kv_dkv(
                         torch.float32
                     )
 
-        # reduce-scatter dk and kv
-        dk, dk_rs_handles = reduce_scatter_raw(full_dk, process_group, async_op=True, reduce_dim=1)
-        dv, dv_rs_handles = reduce_scatter_raw(full_dv, process_group, async_op=True, reduce_dim=1)
-        return dq, dk, dv, dk_rs_handles, dv_rs_handles
+
+        return dq, full_dk, full_dv
+    
+    def _head_other_window_backward(head_dout, head_q, head_k, head_v, head_out, dq, head_softmax_lse, window_num_idx):
+        
+        full_dk = torch.zeros_like(head_k, dtype=torch.float32)
+        full_dv = torch.zeros_like(head_v, dtype=torch.float32)
+        
+        if window_num_idx > p2p_comm.rank:
+      
+            for step in range(all_gather_comm.world_size):
+                
+                if step == 0:
+                    cur_kv_idx = all_gather_comm.rank
+                else:
+                    cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k = head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                v = head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
+                dout1 = head_dout.chunk(2, dim=1)[1]
+                q1 = head_q.chunk(2, dim=1)[1]
+                out1 = head_out.chunk(2, dim=1)[1]
+                softmax_lse1 = head_softmax_lse.chunk(2, dim=2)[1].contiguous()
+                backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
+                # always use the first half in dq_buffer.
+                dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
+                full_dk[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dk_buffer.to(
+                    torch.float32
+                )
+                full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv_buffer.to(
+                    torch.float32
+                )       
+        else:       
+
+            for step in range(all_gather_comm.world_size):
+                if step == 0:
+                    cur_kv_idx = all_gather_comm.rank
+                else:
+                    cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                
+                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
+                k0 = head_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                v0 = head_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
+                backward(head_dout, head_q, k0, v0, head_out, head_softmax_lse, causal=False)
+                dq += dq_buffer
+
+                full_dk[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dk_buffer[
+                    :, :block_seq_len
+                ].to(torch.float32)
+
+                full_dv[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dv_buffer[
+                    :, :block_seq_len
+                ].to(torch.float32)  
+
+        return dq, full_dk, full_dv
+
+
+    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_num = ring_comm.world_size // window_size
 
     dqs, dks, dvs = [], [], []
-    dk_rs_handles, dv_rs_handles = [], []
-
+    
+    kv_comm_stream = torch.cuda.Stream()
+    kv_comm_event = torch.cuda.Event()
+    kv_compute_event = torch.cuda.Event()
+    
+    dkv_comm_stream = torch.cuda.Stream()
+    dkv_comm_event = torch.cuda.Event()
+    dkv_compute_event = torch.cuda.Event()
+    
     for i in range(head_chunks):
-        if i == 0:
-            # all gather the first part of k_splits ,v_splits
-            k_cur, handle_k_cur = all_gather_raw(k_splits[i], process_group, async_op=True, gather_dim=1)
-            v_cur, handle_v_cur = all_gather_raw(v_splits[i], process_group, async_op=True, gather_dim=1)
-            handle_k_cur.wait()
-            handle_v_cur.wait()
-        else:
-            handle_k_next.wait()
-            handle_v_next.wait()
-            k_cur = k_next
-            v_cur = v_next
+        
+        local_k = k_splits[i]
+        local_v = v_splits[i]
 
-        if i != head_chunks - 1:
-            k_next, handle_k_next = all_gather_raw(k_splits[i + 1], process_group, async_op=True, gather_dim=1)
-            v_next, handle_v_next = all_gather_raw(v_splits[i + 1], process_group, async_op=True, gather_dim=1)
+        for j in range(window_num):
+            
+            if j > 0:
+                torch.cuda.current_stream().wait_event(kv_comm_event)
+                full_k = full_k_next
+                full_v = full_v_next
+                local_k = next_k
+                local_v = next_v
+            else:
+                full_k, _ = all_gather_raw(local_k, all_gather_pg, async_op=False, gather_dim=1)
+                full_v, _ = all_gather_raw(local_v, all_gather_pg, async_op=False, gather_dim=1)
+                torch.cuda.current_stream().record_event(kv_compute_event)
+            
+            if j + 1 != window_num:
+                with torch.cuda.stream(kv_comm_stream):
+                    kv_comm_stream.wait_event(kv_compute_event)
+                    next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous())
+                    next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous())
+                    p2p_comm.commit()
+                    p2p_comm.wait()
+                    full_k_next, _ = all_gather_raw(next_k, all_gather_pg, async_op=False, gather_dim=1)
+                    full_v_next, _ = all_gather_raw(next_v, all_gather_pg, async_op=False, gather_dim=1)
+                    kv_comm_stream.record_event(kv_comm_event)
+            
+            if j == 0:
+                dq, full_dk, full_dv = _head_first_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
+                                                         q[..., i * head_step : (i + 1) * head_step, :],
+                                                         full_k,
+                                                         full_v,
+                                                         out[..., i * head_step : (i + 1) * head_step, :],
+                                                         softmax_lse[:, i * head_step : (i + 1) * head_step, :],)
+            else:              
+                dq, full_dk, full_dv = _head_other_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
+                                                         q[..., i * head_step : (i + 1) * head_step, :],
+                                                         full_k,
+                                                         full_v,
+                                                         out[..., i * head_step : (i + 1) * head_step, :],
+                                                         dq,
+                                                         softmax_lse[:, i * head_step : (i + 1) * head_step, :],
+                                                         window_num_idx=j)
+                
+                torch.cuda.current_stream().wait_event(dkv_comm_event)
+                dk = next_dk
+                dv = next_dv  
+                full_dk[:, 2 * all_gather_comm.rank * block_seq_len : 2 * (all_gather_comm.rank + 1) * block_seq_len] += dk.to(torch.float32)
+                full_dv[:, 2 * all_gather_comm.rank * block_seq_len : 2 * (all_gather_comm.rank + 1) * block_seq_len] += dv.to(torch.float32)
+        
+                    
+            torch.cuda.current_stream().record_event(kv_compute_event)
+            torch.cuda.current_stream().record_event(dkv_compute_event)
+            
+            
+            with torch.cuda.stream(dkv_comm_stream):
+                dkv_comm_stream.wait_event(dkv_compute_event)
+                # reduce-scatter dk and kv
+                dk, _ = reduce_scatter_raw(full_dk, all_gather_pg, async_op=False, reduce_dim=1)
+                dv, _ = reduce_scatter_raw(full_dv, all_gather_pg, async_op=False, reduce_dim=1)
+                
+                next_dk: torch.Tensor = dkv_comm.send_recv(dk.contiguous())
+                next_dv: torch.Tensor = dkv_comm.send_recv(dv.contiguous())
+                dkv_comm.commit()
+                dkv_comm.wait()
+                dkv_comm_stream.record_event(dkv_comm_event)
 
-        dq, dk, dv, dk_handle, dv_handle = _head_backward(
-            dout[..., i * head_step : (i + 1) * head_step, :],
-            q[..., i * head_step : (i + 1) * head_step, :],
-            k_cur,
-            v_cur,
-            out[..., i * head_step : (i + 1) * head_step, :],
-            softmax_lse[:, i * head_step : (i + 1) * head_step, :],
-        )
-
+        torch.cuda.current_stream().wait_event(dkv_comm_event)
         dqs.append(dq)
-        dks.append(dk)
-        dvs.append(dv)
-        dk_rs_handles.append(dk_handle)
-        dv_rs_handles.append(dv_handle)
+        dks.append(next_dk)
+        dvs.append(next_dv)
 
     dq_final = torch.concat(dqs, dim=-2)
-    for dk_rs_handle in dk_rs_handles:
-        dk_rs_handle.wait()
     dk_final = torch.concat(dks, dim=-2)
-    for dv_rs_handle in dv_rs_handles:
-        dv_rs_handle.wait()
+
     dv_final = torch.concat(dvs, dim=-2)
 
     return dq_final.to(q.dtype), dk_final.to(k.dtype), dv_final.to(v.dtype)
+
 
 
 class ZigZagRingFlashAttnFunc(torch.autograd.Function):
@@ -908,7 +1013,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         k = k.contiguous()
         v = v.contiguous()
 
-        out, softmax_lse = zigzag_ring_flash_attn_forward(
+        out, softmax_lse = zigzag_ring_flash_attn_forward_stream(
             ring_group, p2p_group, all_gather_group, q, k, v, softmax_scale=softmax_scale, dropout_p=dropout_p, causal=causal
         )
         # this should be out_padded
@@ -920,7 +1025,9 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         ctx.alibi_slopes = alibi_slopes
         ctx.deterministic = deterministic
         ctx.with_full_dkv = with_full_dkv
-        ctx.group = ring_group
+        ctx.ring_group = ring_group
+        ctx.p2p_group = p2p_group
+        ctx.all_gather_group = all_gather_group
         return out if not return_softmax else (out, softmax_lse, None)
 
     @staticmethod
@@ -933,7 +1040,9 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         )
 
         dq, dk, dv = backward_func(
-            ctx.group,
+            ctx.ring_group,
+            ctx.p2p_group,
+            ctx.all_gather_group,
             dout,
             q,
             k,
