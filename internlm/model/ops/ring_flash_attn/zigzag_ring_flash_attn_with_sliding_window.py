@@ -368,8 +368,10 @@ def zigzag_double_ring_flash_attn_forward(
     return out, lse
 
 
-def zigzag_ring_flash_attn_backward_full_kv(
-    process_group,
+def zigzag_double_ring_flash_attn_backward(
+    ring_pg,
+    p2p_pg,
+    local_p2p_pg,
     dout,
     q,
     k,
@@ -386,8 +388,15 @@ def zigzag_ring_flash_attn_backward_full_kv(
     if gpc.get_global_rank() == 0:
         print("full_kv_zigzag_with_full_dkv = False", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
-    kv_comm = RingComm(process_group)
-    d_kv_comm = RingComm(process_group)
+    
+    ring_comm = RingComm(ring_pg)
+    dkv_comm = RingComm(p2p_pg)
+    kv_comm = RingComm(p2p_pg)
+    local_kv_comm = RingComm(local_p2p_pg)
+    local_dkv_comm = RingComm(local_p2p_pg)
+    
+    # print(f"xyt global rank = {gpc.get_global_rank()}, ring_pg = {torch.distributed.get_process_group_ranks(ring_pg)}, p2p_pg = {torch.distributed.get_process_group_ranks(p2p_pg)}, local_p2p_pg = {torch.distributed.get_process_group_ranks(local_p2p_pg)}", flush=True)
+    
 
     head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
     if head_overlap_enable:
@@ -407,12 +416,6 @@ def zigzag_ring_flash_attn_backward_full_kv(
     dk_buffer = create_buffer(k, head_chunks=head_chunks, dim=-2)
     dv_buffer = create_buffer(v, head_chunks=head_chunks, dim=-2)
 
-    def get_next_kv_idx(prev_idx) -> int:
-        if prev_idx == 0:
-            return kv_comm.world_size - 1
-        else:
-            return prev_idx - 1
-
     def backward(dout, q, k, v, out, softmax_lse, causal):
         seqlen_q = q.shape[1]
         seqlen_kv = k.shape[1]
@@ -431,97 +434,189 @@ def zigzag_ring_flash_attn_backward_full_kv(
             softmax_scale,
             causal,
         )
-
-    def _head_backward(head_dout, head_q, head_k, head_v, head_out, head_softmax_lse):
-
-        dq, dk, dv = None, None, None
-        next_dk, next_dv = None, None
+    
+    
+    def _head_first_window_backward(dout, q, k, v, out, softmax_lse):
+        
         dk_comm_buffer, dv_comm_buffer = None, None
+        dq, dk, dv = None, None, None
+        
+        for step in range(local_kv_comm.world_size):
+            if step + 1 != local_kv_comm.world_size:
+                next_k = local_kv_comm.send_recv(k)
+                next_v = local_kv_comm.send_recv(v)
+                local_kv_comm.commit()
 
-        for step in range(kv_comm.world_size):
             if step == 0:
-
-                cur_kv_idx = kv_comm.rank
-                backward(
-                    head_dout,
-                    head_q,
-                    head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len],
-                    head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len],
-                    head_out,
-                    head_softmax_lse,
-                    causal=True,
-                )
+                backward(dout, q, k, v, out, softmax_lse, causal=True)
                 dq = dq_buffer.to(torch.float32)
                 dk = dk_buffer.to(torch.float32)
                 dv = dv_buffer.to(torch.float32)
             else:
-                cur_kv_idx = get_next_kv_idx(cur_kv_idx)
-                if step <= kv_comm.rank:
-                    k0 = head_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
-                    v0 = head_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
-                    backward(head_dout, head_q, k0, v0, head_out, head_softmax_lse, causal=False)
+                if step <= local_kv_comm.rank:
+                    k0 = k[:, :block_seq_len]
+                    v0 = v[:, :block_seq_len]
+                    backward(dout, q, k0, v0, out, softmax_lse, causal=False)
                     dq += dq_buffer
                 else:
-                    k = head_k[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
-                    v = head_v[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len]
-
-                    dout1 = head_dout.chunk(2, dim=1)[1]
-                    q1 = head_q.chunk(2, dim=1)[1]
-                    out1 = head_out.chunk(2, dim=1)[1]
-                    softmax_lse1 = head_softmax_lse.chunk(2, dim=2)[1].contiguous()
+                    dout1 = dout.chunk(2, dim=1)[1]
+                    q1 = q.chunk(2, dim=1)[1]
+                    out1 = out.chunk(2, dim=1)[1]
+                    softmax_lse1 = softmax_lse.chunk(2, dim=2)[1].contiguous()
                     backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
-
                     # always use the first half in dq_buffer.
-                    dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]  # pylint: disable=E1137
+                    dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]
 
-                d_kv_comm.wait()
+                local_dkv_comm.wait()
                 dk_comm_buffer, dv_comm_buffer = dk, dv
                 dk, dv = next_dk, next_dv
 
-                if step <= kv_comm.rank:
-                    dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len]  # pylint: disable=E1137
-                    dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len]  # pylint: disable=E1137
+                if step <= local_kv_comm.rank:
+                    dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len]
+                    dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len]
                 else:
                     dk += dk_buffer
                     dv += dv_buffer
 
-            next_dk = d_kv_comm.send_recv(dk, dk_comm_buffer)
-            next_dv = d_kv_comm.send_recv(dv, dv_comm_buffer)
-            d_kv_comm.commit()
+            if step + 1 != local_kv_comm.world_size:
+                local_kv_comm.wait()
+                k = next_k
+                v = next_v
 
-        d_kv_comm.wait()
+            next_dk = local_dkv_comm.send_recv(dk, dk_comm_buffer)
+            next_dv = local_dkv_comm.send_recv(dv, dv_comm_buffer)
+            local_dkv_comm.commit()
 
-        return dq, next_dk, next_dv
+        local_dkv_comm.wait()
+        
+        return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
+    
+    
+    def _head_other_window_backward(dout, q, k, v, dq, dk, dv, out, softmax_lse, window_num_idx):
+        
+        dk_comm_buffer, dv_comm_buffer = None, None
+        
+        if window_num_idx > kv_comm.rank:
+            
+            for step in range(local_kv_comm.world_size):
+                
+                if step + 1 != local_kv_comm.world_size:
+                    next_k = local_kv_comm.send_recv(k)
+                    next_v = local_kv_comm.send_recv(v)
+                    local_kv_comm.commit()
+                
+                dout1 = dout.chunk(2, dim=1)[1]
+                q1 = q.chunk(2, dim=1)[1]
+                out1 = out.chunk(2, dim=1)[1]
+                softmax_lse1 = softmax_lse.chunk(2, dim=2)[1].contiguous()
+                backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
+                # always use the first half in dq_buffer.
+                dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]
+                
+                if step > 0:
+                    local_dkv_comm.wait()
+                    dk_comm_buffer, dv_comm_buffer = dk, dv
+                    dk, dv = next_dk, next_dv
+                    
+                dk += dk_buffer
+                dv += dv_buffer
+                
+                if step + 1 != local_kv_comm.world_size:
+                    local_kv_comm.wait()
+                    k = next_k
+                    v = next_v
+
+                next_dk = local_dkv_comm.send_recv(dk, dk_comm_buffer)
+                next_dv = local_dkv_comm.send_recv(dv, dv_comm_buffer)
+                local_dkv_comm.commit()
+            
+            local_dkv_comm.wait()
+        else:
+            
+            for step in range(local_kv_comm.world_size):
+                
+                if step + 1 != local_kv_comm.world_size:
+                    next_k = local_kv_comm.send_recv(k)
+                    next_v = local_kv_comm.send_recv(v)
+                    local_kv_comm.commit()
+                
+                k0 = k[:, :block_seq_len]
+                v0 = v[:, :block_seq_len]
+                backward(dout, q, k0, v0, out, softmax_lse, causal=False)
+                dq += dq_buffer
+
+                if step > 0:
+                    local_dkv_comm.wait()
+                    dk_comm_buffer, dv_comm_buffer = dk, dv
+                    dk, dv = next_dk, next_dv
+
+                dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len]
+                dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len]
+                
+                if step + 1 != local_kv_comm.world_size:
+                    local_kv_comm.wait()
+                    k = next_k
+                    v = next_v
+
+                next_dk = local_dkv_comm.send_recv(dk, dk_comm_buffer)
+                next_dv = local_dkv_comm.send_recv(dv, dv_comm_buffer)
+                local_dkv_comm.commit()             
+            
+            local_dkv_comm.wait()
+        
+        return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
+        
+    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_num = ring_comm.world_size // window_size
 
     dqs, next_dks, next_dvs = [], [], []
 
     for i in range(head_chunks):
-        if i == 0:
-            # all gather the first part of k_splits ,v_splits
-            k_cur, handle_k_cur = all_gather_raw(k_splits[i], process_group, async_op=True, gather_dim=1)
-            v_cur, handle_v_cur = all_gather_raw(v_splits[i], process_group, async_op=True, gather_dim=1)
-            handle_k_cur.wait()
-            handle_v_cur.wait()
-        else:
-            handle_k_next.wait()
-            handle_v_next.wait()
-            k_cur = k_next
-            v_cur = v_next
-
-        # all gather the next part of k_splits, v_splits
-        if i != head_chunks - 1:
-            k_next, handle_k_next = all_gather_raw(k_splits[i + 1], process_group, async_op=True, gather_dim=1)
-            v_next, handle_v_next = all_gather_raw(v_splits[i + 1], process_group, async_op=True, gather_dim=1)
-
-        dq, next_dk, next_dv = _head_backward(
-            dout[..., i * head_step : (i + 1) * head_step, :],
-            q[..., i * head_step : (i + 1) * head_step, :],
-            k_cur,
-            v_cur,
-            out[..., i * head_step : (i + 1) * head_step, :],
-            softmax_lse[..., i * head_step : (i + 1) * head_step, :],
-        )
-
+        
+        local_k = k_splits[i]
+        local_v = v_splits[i]
+        
+        for j in range(window_num):
+            
+            if j > 0:
+                kv_comm.wait()
+                local_k = next_k
+                local_v = next_v
+                
+            if j + 1 != window_num:
+                next_k: torch.Tensor = kv_comm.send_recv(local_k.contiguous())
+                next_v: torch.Tensor = kv_comm.send_recv(local_v.contiguous())
+                kv_comm.commit()
+            
+            if j > 0:
+                dkv_comm.wait()
+                dk = next_dk
+                dv = next_dv
+            
+            if j == 0:
+                dq, dk, dv = _head_first_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
+                                                         q[..., i * head_step : (i + 1) * head_step, :],
+                                                         local_k,
+                                                         local_v,
+                                                         out[..., i * head_step : (i + 1) * head_step, :],
+                                                         softmax_lse[..., i * head_step : (i + 1) * head_step, :],)
+            else:
+                dq, dk, dv = _head_other_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
+                                                         q[..., i * head_step : (i + 1) * head_step, :],
+                                                         local_k,
+                                                         local_v,
+                                                         dq,
+                                                         dk,
+                                                         dv,
+                                                         out[..., i * head_step : (i + 1) * head_step, :],
+                                                         softmax_lse[..., i * head_step : (i + 1) * head_step, :],
+                                                         window_num_idx=j)
+                       
+            next_dk: torch.Tensor = dkv_comm.send_recv(dk.contiguous())
+            next_dv: torch.Tensor = dkv_comm.send_recv(dv.contiguous())
+            dkv_comm.commit()
+            
+        dkv_comm.wait()
         dqs.append(dq)
         next_dks.append(next_dk)
         next_dvs.append(next_dv)
@@ -533,7 +628,7 @@ def zigzag_ring_flash_attn_backward_full_kv(
     return dq, next_dk, next_dv
 
 
-def zigzag_ring_flash_attn_backward_full_kv_dkv(
+def zigzag_ring_flash_attn_backward(
     ring_pg,
     p2p_pg,
     all_gather_pg,
@@ -840,7 +935,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         k = k.contiguous()
         v = v.contiguous()
 
-        out, softmax_lse = zigzag_ring_flash_attn_forward(
+        out, softmax_lse = zigzag_double_ring_flash_attn_forward(
             ring_group, p2p_group, all_gather_group, q, k, v, softmax_scale=softmax_scale, dropout_p=dropout_p, causal=causal
         )
         # this should be out_padded
@@ -863,7 +958,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         with_full_dkv = ctx.with_full_dkv
 
         backward_func = (
-            zigzag_ring_flash_attn_backward_full_kv_dkv if with_full_dkv else zigzag_ring_flash_attn_backward_full_kv
+            zigzag_ring_flash_attn_backward if with_full_dkv else zigzag_double_ring_flash_attn_backward
         )
 
         dq, dk, dv = backward_func(
