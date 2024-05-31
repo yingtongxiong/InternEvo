@@ -7,10 +7,12 @@ from internlm.core.parallel.comm.utils import all_gather_raw, reduce_scatter_raw
 
 from .utils import RingComm, update_out_and_lse
 
+
 def create_buffer(tensor, head_chunks, dim):
     buffer_shape = list(tensor.shape)
     buffer_shape[dim] //= head_chunks
     return torch.empty(buffer_shape, dtype=tensor.dtype, device=tensor.device)
+
 
 def zigzag_ring_flash_attn_forward(
     ring_pg,
@@ -26,14 +28,14 @@ def zigzag_ring_flash_attn_forward(
     alibi_slopes=None,  # pylint: disable=W0613
     deterministic=False,  # pylint: disable=W0613
 ):
-    
+
     if gpc.get_global_rank() == 0:
         print("P2P + AllGATHER FORWARD.........", flush=True)
-    
+
     assert causal is True, "zigzag ring is meaningless for causal=False"
     ring_comm = RingComm(ring_pg)
     p2p_comm = RingComm(p2p_pg)
-    
+
     all_gather_ws = torch.distributed.get_world_size(all_gather_pg)
     all_gather_local_rank = torch.distributed.get_rank(all_gather_pg)
 
@@ -56,7 +58,6 @@ def zigzag_ring_flash_attn_forward(
             return all_gather_ws - 1
         else:
             return prev_idx - 1
-
 
     def _head_first_window_forward(q, full_k, full_v):
         out = None
@@ -94,12 +95,11 @@ def zigzag_ring_flash_attn_forward(
                 )
 
         return out, lse
-    
-    
+
     def _head_other_window_forward(out, lse, q, full_k, full_v, window_num_idx):
-        
+
         if window_num_idx > p2p_comm.rank:
-            
+
             for step in range(all_gather_ws):
                 if step == 0:
                     cur_kv_idx = all_gather_local_rank
@@ -128,37 +128,36 @@ def zigzag_ring_flash_attn_forward(
                 out, lse = update_out_and_lse(out, lse, block_out, block_lse)
 
         return out, lse
-        
 
     head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1)
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
         head_chunks = 1
-    
+
     window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
-    
-    head_step = k.shape[-2] // head_chunks
+
+    head_step = q.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
 
     outs = []
     lses = []
-    
+
     comm_stream = torch.cuda.Stream()
     comm_event = torch.cuda.Event()
     compute_event = torch.cuda.Event()
 
     for i in range(head_chunks):
-        
+
         local_k = k_splits[i]
         local_v = v_splits[i]
-        
+
         for j in range(window_num):
-            
+
             if j == 0:
                 full_k, _ = all_gather_raw(local_k, all_gather_pg, async_op=False, gather_dim=1)
                 full_v, _ = all_gather_raw(local_v, all_gather_pg, async_op=False, gather_dim=1)
@@ -169,7 +168,7 @@ def zigzag_ring_flash_attn_forward(
                 local_v = next_v
                 full_k = full_k_next
                 full_v = full_v_next
-            
+
             if j + 1 != window_num:
                 with torch.cuda.stream(comm_stream):
                     comm_stream.wait_event(compute_event)
@@ -180,16 +179,18 @@ def zigzag_ring_flash_attn_forward(
                     full_k_next, _ = all_gather_raw(next_k, all_gather_pg, async_op=False, gather_dim=1)
                     full_v_next, _ = all_gather_raw(next_v, all_gather_pg, async_op=False, gather_dim=1)
                     comm_stream.record_event(comm_event)
-            
+
             if j == 0:
                 out, lse = _head_first_window_forward(q[..., i * head_step : (i + 1) * head_step, :], full_k, full_v)
             else:
-                out, lse = _head_other_window_forward(out, lse, q[..., i * head_step : (i + 1) * head_step, :], full_k, full_v, window_num_idx=j)
-            
+                out, lse = _head_other_window_forward(
+                    out, lse, q[..., i * head_step : (i + 1) * head_step, :], full_k, full_v, window_num_idx=j
+                )
+
             torch.cuda.current_stream().record_event(compute_event)
 
         lse = lse.squeeze(dim=-1).transpose(1, 2)
-        
+
         outs.append(out)
         lses.append(lse)
 
@@ -197,6 +198,7 @@ def zigzag_ring_flash_attn_forward(
     lse = torch.cat(lses, dim=-2)
 
     return out, lse
+
 
 def zigzag_double_ring_flash_attn_forward(
     ring_pg,
@@ -212,10 +214,10 @@ def zigzag_double_ring_flash_attn_forward(
     alibi_slopes=None,  # pylint: disable=W0613
     deterministic=False,  # pylint: disable=W0613
 ):
-    
+
     if gpc.get_global_rank() == 0:
         print("DOUBLE RING FORWARD.........", flush=True)
-    
+
     assert causal is True, "zigzag ring is meaningless for causal=False"
     ring_comm = RingComm(ring_pg)
     p2p_comm = RingComm(p2p_pg)
@@ -235,7 +237,6 @@ def zigzag_double_ring_flash_attn_forward(
         )
         return block_out, block_lse
 
-
     def _head_first_window_forward(q, k, v):
         out = None
         lse = None
@@ -246,7 +247,7 @@ def zigzag_double_ring_flash_attn_forward(
                 next_k: torch.Tensor = local_p2p_comm.send_recv(k)
                 next_v: torch.Tensor = local_p2p_comm.send_recv(v)
                 local_p2p_comm.commit()
-            
+
             if step == 0:
                 block_out, block_lse = forward(
                     q,
@@ -256,8 +257,8 @@ def zigzag_double_ring_flash_attn_forward(
                 )
                 out, lse = update_out_and_lse(out, lse, block_out, block_lse)
             elif step <= local_p2p_comm.rank:
-                k0 = k[:, : block_seq_len]
-                v0 = v[:, : block_seq_len]
+                k0 = k[:, :block_seq_len]
+                v0 = v[:, :block_seq_len]
                 block_out, block_lse = forward(q, k0, v0, causal=False)
                 out, lse = update_out_and_lse(out, lse, block_out, block_lse)
             else:
@@ -270,21 +271,20 @@ def zigzag_double_ring_flash_attn_forward(
                     block_lse,
                     slice_=(slice(None), slice(block_seq_len, None)),
                 )
-            
+
             if step + 1 != local_p2p_comm.world_size:
                 local_p2p_comm.wait()
                 k = next_k
                 v = next_v
 
         return out, lse
-    
-    
+
     def _head_other_window_forward(out, lse, q, k, v, window_num_idx):
-        
+
         if window_num_idx > p2p_comm.rank:
-            
+
             for step in range(local_p2p_comm.world_size):
-                
+
                 if step + 1 != local_p2p_comm.world_size:
                     next_k: torch.Tensor = local_p2p_comm.send_recv(k)
                     next_v: torch.Tensor = local_p2p_comm.send_recv(v)
@@ -299,43 +299,42 @@ def zigzag_double_ring_flash_attn_forward(
                     block_lse,
                     slice_=(slice(None), slice(block_seq_len, None)),
                 )
-                
+
                 if step + 1 != local_p2p_comm.world_size:
                     local_p2p_comm.wait()
                     k = next_k
                     v = next_v
         else:
             for step in range(local_p2p_comm.world_size):
-                
+
                 if step + 1 != local_p2p_comm.world_size:
                     next_k: torch.Tensor = local_p2p_comm.send_recv(k)
                     next_v: torch.Tensor = local_p2p_comm.send_recv(v)
                     local_p2p_comm.commit()
 
-                k0 = k[:,  : block_seq_len]
-                v0 = v[:,  : block_seq_len]
+                k0 = k[:, :block_seq_len]
+                v0 = v[:, :block_seq_len]
                 block_out, block_lse = forward(q, k0, v0, causal=False)
                 out, lse = update_out_and_lse(out, lse, block_out, block_lse)
-                
+
                 if step + 1 != local_p2p_comm.world_size:
                     local_p2p_comm.wait()
                     k = next_k
                     v = next_v
         return out, lse
-        
 
     head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1)
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
         head_chunks = 1
-    
+
     window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
-    
-    head_step = k.shape[-2] // head_chunks
+
+    head_step = q.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
 
@@ -343,17 +342,17 @@ def zigzag_double_ring_flash_attn_forward(
     lses = []
 
     for i in range(head_chunks):
-        
+
         local_k = k_splits[i]
         local_v = v_splits[i]
-        
+
         for j in range(window_num):
-            
+
             if j > 0:
                 p2p_comm.wait()
                 local_k = next_k
                 local_v = next_v
-            
+
             if j + 1 != window_num:
                 next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous())
                 next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous())
@@ -363,16 +362,18 @@ def zigzag_double_ring_flash_attn_forward(
                 # out, lse = _head_first_window_forward(q[..., i * head_step : (i + 1) * head_step, :], local_k, local_v)
                 out, lse = _head_first_window_forward(q, local_k, local_v)
             else:
-                out, lse = _head_other_window_forward(out, lse, q[..., i * head_step : (i + 1) * head_step, :], local_k, local_v, window_num_idx=j)
-        
+                out, lse = _head_other_window_forward(
+                    out, lse, q[..., i * head_step : (i + 1) * head_step, :], local_k, local_v, window_num_idx=j
+                )
+
         lse = lse.squeeze(dim=-1).transpose(1, 2)
         out = out.to(q.dtype)
-        
-    #     outs.append(out)
-    #     lses.append(lse)
 
-    # out = torch.cat(outs, dim=-2).to(q.dtype).contiguous()
-    # lse = torch.cat(lses, dim=-2).contiguous()
+        outs.append(out)
+        lses.append(lse)
+
+    out = torch.cat(outs, dim=-2).to(q.dtype).contiguous()
+    lse = torch.cat(lses, dim=-2).contiguous()
     return out, lse
 
 
@@ -396,25 +397,24 @@ def zigzag_double_ring_flash_attn_backward(
     if gpc.get_global_rank() == 0:
         print("DOUBLE RING BACKWARD.........", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
-    
+
     ring_comm = RingComm(ring_pg)
     dkv_comm = RingComm(p2p_pg)
     kv_comm = RingComm(p2p_pg)
     local_kv_comm = RingComm(local_p2p_pg)
     local_dkv_comm = RingComm(local_p2p_pg)
-    
+
     # print(f"xyt global rank = {gpc.get_global_rank()}, ring_pg = {torch.distributed.get_process_group_ranks(ring_pg)}, p2p_pg = {torch.distributed.get_process_group_ranks(p2p_pg)}, local_p2p_pg = {torch.distributed.get_process_group_ranks(local_p2p_pg)}", flush=True)
-    
 
     head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1)
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
         head_chunks = 1
-    
-    head_step = k.shape[-2] // head_chunks
+
+    head_step = q.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
     block_seq_len = q.shape[1] // 2
@@ -442,13 +442,12 @@ def zigzag_double_ring_flash_attn_backward(
             softmax_scale,
             causal,
         )
-    
-    
+
     def _head_first_window_backward(dout, q, k, v, out, softmax_lse):
-        
+
         dk_comm_buffer, dv_comm_buffer = None, None
         dq, dk, dv = None, None, None
-        
+
         for step in range(local_kv_comm.world_size):
             if step + 1 != local_kv_comm.world_size:
                 next_k = local_kv_comm.send_recv(k)
@@ -496,23 +495,22 @@ def zigzag_double_ring_flash_attn_backward(
             local_dkv_comm.commit()
 
         local_dkv_comm.wait()
-        
+
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
-    
-    
+
     def _head_other_window_backward(dout, q, k, v, dq, dk, dv, out, softmax_lse, window_num_idx):
-        
+
         dk_comm_buffer, dv_comm_buffer = None, None
-        
+
         if window_num_idx > kv_comm.rank:
-            
+
             for step in range(local_kv_comm.world_size):
-                
+
                 if step + 1 != local_kv_comm.world_size:
                     next_k = local_kv_comm.send_recv(k)
                     next_v = local_kv_comm.send_recv(v)
                     local_kv_comm.commit()
-                
+
                 dout1 = dout.chunk(2, dim=1)[1]
                 q1 = q.chunk(2, dim=1)[1]
                 out1 = out.chunk(2, dim=1)[1]
@@ -520,15 +518,15 @@ def zigzag_double_ring_flash_attn_backward(
                 backward(dout1, q1, k, v, out1, softmax_lse1, causal=False)
                 # always use the first half in dq_buffer.
                 dq[:, block_seq_len:] += dq_buffer[:, :block_seq_len]
-                
+
                 if step > 0:
                     local_dkv_comm.wait()
                     dk_comm_buffer, dv_comm_buffer = dk, dv
                     dk, dv = next_dk, next_dv
-                    
+
                 dk += dk_buffer
                 dv += dv_buffer
-                
+
                 if step + 1 != local_kv_comm.world_size:
                     local_kv_comm.wait()
                     k = next_k
@@ -537,17 +535,17 @@ def zigzag_double_ring_flash_attn_backward(
                 next_dk = local_dkv_comm.send_recv(dk, dk_comm_buffer)
                 next_dv = local_dkv_comm.send_recv(dv, dv_comm_buffer)
                 local_dkv_comm.commit()
-            
+
             local_dkv_comm.wait()
         else:
-            
+
             for step in range(local_kv_comm.world_size):
-                
+
                 if step + 1 != local_kv_comm.world_size:
                     next_k = local_kv_comm.send_recv(k)
                     next_v = local_kv_comm.send_recv(v)
                     local_kv_comm.commit()
-                
+
                 k0 = k[:, :block_seq_len]
                 v0 = v[:, :block_seq_len]
                 backward(dout, q, k0, v0, out, softmax_lse, causal=False)
@@ -560,7 +558,7 @@ def zigzag_double_ring_flash_attn_backward(
 
                 dk[:, :block_seq_len] += dk_buffer[:, :block_seq_len]
                 dv[:, :block_seq_len] += dv_buffer[:, :block_seq_len]
-                
+
                 if step + 1 != local_kv_comm.world_size:
                     local_kv_comm.wait()
                     k = next_k
@@ -568,62 +566,66 @@ def zigzag_double_ring_flash_attn_backward(
 
                 next_dk = local_dkv_comm.send_recv(dk, dk_comm_buffer)
                 next_dv = local_dkv_comm.send_recv(dv, dv_comm_buffer)
-                local_dkv_comm.commit()             
-            
+                local_dkv_comm.commit()
+
             local_dkv_comm.wait()
-        
+
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
-        
+
     window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
 
     dqs, next_dks, next_dvs = [], [], []
 
     for i in range(head_chunks):
-        
+
         local_k = k_splits[i]
         local_v = v_splits[i]
-        
+
         for j in range(window_num):
-            
+
             if j > 0:
                 kv_comm.wait()
                 local_k = next_k
                 local_v = next_v
-                
+
             if j + 1 != window_num:
                 next_k: torch.Tensor = kv_comm.send_recv(local_k.contiguous())
                 next_v: torch.Tensor = kv_comm.send_recv(local_v.contiguous())
                 kv_comm.commit()
-            
+
             if j > 0:
                 dkv_comm.wait()
                 dk = next_dk
                 dv = next_dv
-            
+
             if j == 0:
-                dq, dk, dv = _head_first_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
-                                                         q[..., i * head_step : (i + 1) * head_step, :],
-                                                         local_k,
-                                                         local_v,
-                                                         out[..., i * head_step : (i + 1) * head_step, :],
-                                                         softmax_lse[..., i * head_step : (i + 1) * head_step, :],)
+                dq, dk, dv = _head_first_window_backward(
+                    dout[..., i * head_step : (i + 1) * head_step, :],
+                    q[..., i * head_step : (i + 1) * head_step, :],
+                    local_k,
+                    local_v,
+                    out[..., i * head_step : (i + 1) * head_step, :],
+                    softmax_lse[..., i * head_step : (i + 1) * head_step, :],
+                )
             else:
-                dq, dk, dv = _head_other_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
-                                                         q[..., i * head_step : (i + 1) * head_step, :],
-                                                         local_k,
-                                                         local_v,
-                                                         dq,
-                                                         dk,
-                                                         dv,
-                                                         out[..., i * head_step : (i + 1) * head_step, :],
-                                                         softmax_lse[..., i * head_step : (i + 1) * head_step, :],
-                                                         window_num_idx=j)
-                       
+                dq, dk, dv = _head_other_window_backward(
+                    dout[..., i * head_step : (i + 1) * head_step, :],
+                    q[..., i * head_step : (i + 1) * head_step, :],
+                    local_k,
+                    local_v,
+                    dq,
+                    dk,
+                    dv,
+                    out[..., i * head_step : (i + 1) * head_step, :],
+                    softmax_lse[..., i * head_step : (i + 1) * head_step, :],
+                    window_num_idx=j,
+                )
+
             next_dk: torch.Tensor = dkv_comm.send_recv(dk.contiguous())
             next_dv: torch.Tensor = dkv_comm.send_recv(dv.contiguous())
             dkv_comm.commit()
-            
+
         dkv_comm.wait()
         dqs.append(dq)
         next_dks.append(next_dk)
@@ -656,7 +658,7 @@ def zigzag_ring_flash_attn_backward(
     if gpc.get_global_rank() == 0:
         print("P2P + AllGATHER BACKWARD.........", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
-    
+
     all_gather_comm = RingComm(all_gather_pg)
     p2p_comm = RingComm(p2p_pg)
     ring_comm = RingComm(ring_pg)
@@ -664,13 +666,13 @@ def zigzag_ring_flash_attn_backward(
 
     head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1)
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
         head_chunks = 1
-    
-    head_step = k.shape[-2] // head_chunks
+
+    head_step = q.shape[-2] // head_chunks
     k_splits = torch.chunk(k, chunks=head_chunks, dim=-2)
     v_splits = torch.chunk(v, chunks=head_chunks, dim=-2)
     block_seq_len = q.shape[1] // 2
@@ -685,7 +687,7 @@ def zigzag_ring_flash_attn_backward(
             return all_gather_comm.world_size - 1
         else:
             return prev_idx - 1
-    
+
     def backward(dout, q, k, v, out, softmax_lse, causal):
         seqlen_q = q.shape[1]
         seqlen_kv = k.shape[1]
@@ -703,9 +705,9 @@ def zigzag_ring_flash_attn_backward(
             softmax_scale,
             causal,
         )
-    
+
     def _head_first_window_backward(head_dout, head_q, head_k, head_v, head_out, head_softmax_lse):
-        
+
         full_dk = torch.zeros_like(head_k, dtype=torch.float32)
         full_dv = torch.zeros_like(head_v, dtype=torch.float32)
         dq, dk, dv = None, None, None
@@ -763,18 +765,17 @@ def zigzag_ring_flash_attn_backward(
                         torch.float32
                     )
 
-
         return dq, full_dk, full_dv
-    
+
     def _head_other_window_backward(head_dout, head_q, head_k, head_v, head_out, dq, head_softmax_lse, window_num_idx):
-        
+
         full_dk = torch.zeros_like(head_k, dtype=torch.float32)
         full_dv = torch.zeros_like(head_v, dtype=torch.float32)
-        
+
         if window_num_idx > p2p_comm.rank:
-      
+
             for step in range(all_gather_comm.world_size):
-                
+
                 if step == 0:
                     cur_kv_idx = all_gather_comm.rank
                 else:
@@ -793,15 +794,15 @@ def zigzag_ring_flash_attn_backward(
                 )
                 full_dv[:, 2 * cur_kv_idx * block_seq_len : 2 * (cur_kv_idx + 1) * block_seq_len] += dv_buffer.to(
                     torch.float32
-                )       
-        else:       
+                )
+        else:
 
             for step in range(all_gather_comm.world_size):
                 if step == 0:
                     cur_kv_idx = all_gather_comm.rank
                 else:
                     cur_kv_idx = get_next_kv_idx(cur_kv_idx)
-                
+
                 cur_kv_idx = get_next_kv_idx(cur_kv_idx)
                 k0 = head_k[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
                 v0 = head_v[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len]
@@ -814,31 +815,30 @@ def zigzag_ring_flash_attn_backward(
 
                 full_dv[:, 2 * cur_kv_idx * block_seq_len : (2 * cur_kv_idx + 1) * block_seq_len] += dv_buffer[
                     :, :block_seq_len
-                ].to(torch.float32)  
+                ].to(torch.float32)
 
         return dq, full_dk, full_dv
-
 
     window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
 
     dqs, dks, dvs = [], [], []
-    
+
     kv_comm_stream = torch.cuda.Stream()
     kv_comm_event = torch.cuda.Event()
     kv_compute_event = torch.cuda.Event()
-    
+
     dkv_comm_stream = torch.cuda.Stream()
     dkv_comm_event = torch.cuda.Event()
     dkv_compute_event = torch.cuda.Event()
-    
+
     for i in range(head_chunks):
-        
+
         local_k = k_splits[i]
         local_v = v_splits[i]
 
         for j in range(window_num):
-            
+
             if j > 0:
                 torch.cuda.current_stream().wait_event(kv_comm_event)
                 full_k = full_k_next
@@ -849,7 +849,7 @@ def zigzag_ring_flash_attn_backward(
                 full_k, _ = all_gather_raw(local_k, all_gather_pg, async_op=False, gather_dim=1)
                 full_v, _ = all_gather_raw(local_v, all_gather_pg, async_op=False, gather_dim=1)
                 torch.cuda.current_stream().record_event(kv_compute_event)
-            
+
             if j + 1 != window_num:
                 with torch.cuda.stream(kv_comm_stream):
                     kv_comm_stream.wait_event(kv_compute_event)
@@ -860,41 +860,47 @@ def zigzag_ring_flash_attn_backward(
                     full_k_next, _ = all_gather_raw(next_k, all_gather_pg, async_op=False, gather_dim=1)
                     full_v_next, _ = all_gather_raw(next_v, all_gather_pg, async_op=False, gather_dim=1)
                     kv_comm_stream.record_event(kv_comm_event)
-            
+
             if j == 0:
-                dq, full_dk, full_dv = _head_first_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
-                                                         q[..., i * head_step : (i + 1) * head_step, :],
-                                                         full_k,
-                                                         full_v,
-                                                         out[..., i * head_step : (i + 1) * head_step, :],
-                                                         softmax_lse[:, i * head_step : (i + 1) * head_step, :],)
-            else:              
-                dq, full_dk, full_dv = _head_other_window_backward(dout[..., i * head_step : (i + 1) * head_step, :],
-                                                         q[..., i * head_step : (i + 1) * head_step, :],
-                                                         full_k,
-                                                         full_v,
-                                                         out[..., i * head_step : (i + 1) * head_step, :],
-                                                         dq,
-                                                         softmax_lse[:, i * head_step : (i + 1) * head_step, :],
-                                                         window_num_idx=j)
-                
+                dq, full_dk, full_dv = _head_first_window_backward(
+                    dout[..., i * head_step : (i + 1) * head_step, :],
+                    q[..., i * head_step : (i + 1) * head_step, :],
+                    full_k,
+                    full_v,
+                    out[..., i * head_step : (i + 1) * head_step, :],
+                    softmax_lse[:, i * head_step : (i + 1) * head_step, :],
+                )
+            else:
+                dq, full_dk, full_dv = _head_other_window_backward(
+                    dout[..., i * head_step : (i + 1) * head_step, :],
+                    q[..., i * head_step : (i + 1) * head_step, :],
+                    full_k,
+                    full_v,
+                    out[..., i * head_step : (i + 1) * head_step, :],
+                    dq,
+                    softmax_lse[:, i * head_step : (i + 1) * head_step, :],
+                    window_num_idx=j,
+                )
+
                 torch.cuda.current_stream().wait_event(dkv_comm_event)
                 dk = next_dk
-                dv = next_dv  
-                full_dk[:, 2 * all_gather_comm.rank * block_seq_len : 2 * (all_gather_comm.rank + 1) * block_seq_len] += dk.to(torch.float32)
-                full_dv[:, 2 * all_gather_comm.rank * block_seq_len : 2 * (all_gather_comm.rank + 1) * block_seq_len] += dv.to(torch.float32)
-        
-                    
+                dv = next_dv
+                full_dk[
+                    :, 2 * all_gather_comm.rank * block_seq_len : 2 * (all_gather_comm.rank + 1) * block_seq_len
+                ] += dk.to(torch.float32)
+                full_dv[
+                    :, 2 * all_gather_comm.rank * block_seq_len : 2 * (all_gather_comm.rank + 1) * block_seq_len
+                ] += dv.to(torch.float32)
+
             torch.cuda.current_stream().record_event(kv_compute_event)
             torch.cuda.current_stream().record_event(dkv_compute_event)
-            
-            
+
             with torch.cuda.stream(dkv_comm_stream):
                 dkv_comm_stream.wait_event(dkv_compute_event)
                 # reduce-scatter dk and kv
                 dk, _ = reduce_scatter_raw(full_dk, all_gather_pg, async_op=False, reduce_dim=1)
                 dv, _ = reduce_scatter_raw(full_dv, all_gather_pg, async_op=False, reduce_dim=1)
-                
+
                 next_dk: torch.Tensor = dkv_comm.send_recv(dk.contiguous())
                 next_dv: torch.Tensor = dkv_comm.send_recv(dv.contiguous())
                 dkv_comm.commit()
@@ -912,7 +918,6 @@ def zigzag_ring_flash_attn_backward(
     dv_final = torch.concat(dvs, dim=-2)
 
     return dq_final.to(q.dtype), dk_final.to(k.dtype), dv_final.to(v.dtype)
-
 
 
 class ZigZagRingFlashAttnFunc(torch.autograd.Function):
@@ -933,8 +938,8 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         return_softmax,
         with_full_dkv,
         ring_group,
-        p2p_group = None,
-        all_gather_group = None,
+        p2p_group=None,
+        all_gather_group=None,
     ):
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
@@ -942,12 +947,22 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         assert alibi_slopes is None
         k = k.contiguous()
         v = v.contiguous()
-        
-        sliding_window_comm = gpc.config.ring_attn_overlap.get('comm', 'p2p_AG')
-        forward_func = zigzag_ring_flash_attn_forward if sliding_window_comm == 'p2p_AG' else zigzag_double_ring_flash_attn_forward
+
+        sliding_window_comm = gpc.config.ring_attn_overlap.get("comm", "p2p_AG")
+        forward_func = (
+            zigzag_ring_flash_attn_forward if sliding_window_comm == "p2p_AG" else zigzag_double_ring_flash_attn_forward
+        )
 
         out, softmax_lse = forward_func(
-            ring_group, p2p_group, all_gather_group, q, k, v, softmax_scale=softmax_scale, dropout_p=dropout_p, causal=causal
+            ring_group,
+            p2p_group,
+            all_gather_group,
+            q,
+            k,
+            v,
+            softmax_scale=softmax_scale,
+            dropout_p=dropout_p,
+            causal=causal,
         )
         # this should be out_padded
         ctx.save_for_backward(q, k, v, out, softmax_lse)
@@ -970,7 +985,9 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         sliding_window_comm = ctx.sliding_window_comm
 
         backward_func = (
-            zigzag_ring_flash_attn_backward if sliding_window_comm == 'p2p_AG' else zigzag_double_ring_flash_attn_backward
+            zigzag_ring_flash_attn_backward
+            if sliding_window_comm == "p2p_AG"
+            else zigzag_double_ring_flash_attn_backward
         )
 
         dq, dk, dv = backward_func(
@@ -1031,8 +1048,8 @@ def zigzag_ring_flash_attn_kvpacked_func_with_sliding_window(
     deterministic=False,
     return_attn_probs=False,
     ring_group=None,
-    p2p_group = None,
-    all_gather_group = None,
+    p2p_group=None,
+    all_gather_group=None,
 ):
     return ZigZagRingFlashAttnFunc.apply(
         q,
@@ -1048,7 +1065,7 @@ def zigzag_ring_flash_attn_kvpacked_func_with_sliding_window(
         gpc.config.get("full_kv_zigzag_with_full_dkv", False),  # TODO: pass by args.
         ring_group,
         p2p_group,
-        all_gather_group
+        all_gather_group,
     )
 
 
