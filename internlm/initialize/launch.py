@@ -463,8 +463,10 @@ def args_sanity_check():
         ), "moe only support zero1, set zero1=dict(size=-1,...) can fix this"
     
     # ring attention head overlap
-    if  "ring_attn_head_overlap" not in gpc.config:
-        gpc.config._add_item("ring_attn_head_overlap", {'enable': False, 'head_chunks':1, 'window_size':1})
+    if  "ring_attn_overlap" not in gpc.config:
+        gpc.config._add_item("ring_attn_overlap", {'enable': False, 'head_chunks':1, 'window_size':1, 'comm': 'p2p_AG'})
+    else:
+        assert gpc.config.ring_attn_overlap.comm in ('p2p_AG', 'double_ring'), "the comm should p2p_AG or double_ring."
 
 
 def launch(

@@ -15,10 +15,11 @@ uly_sp=1
 ring_sp=8
 use_ring_attn="sliding_window_zigzag"  # none, basic, zigzag, full_kv_zigzag, sliding_window_zigzag
 full_kv_zigzag_with_full_dkv=False
-ring_attn_head_overlap=dict(
-    enable=True,
-    head_chunks=2, # when enable is True, the head_chunks should be > 1  
+ring_attn_overlap=dict(
+    enable=False,
+    head_chunks=1, # when enable is True, the head_chunks should be > 1  
     window_size=4,
+    comm='double_ring', # double_ring, p2p_AG
 ) # it makes sense when the use_ring_attn="full_kv_zigzag"
 
 
@@ -51,7 +52,7 @@ ckpt = dict(
     oss_snapshot_freq=int(CHECKPOINT_EVERY / 2),  # snapshot ckpt save frequency.
 )
 
-TRAIN_FOLDER = None
+TRAIN_FOLDER = None #'/mnt/petrelfs/share_data/llm_data/0715_llama_tokenized_refined_real/train/'
 VALID_FOLDER = None  # "/path/to/dataset"
 data = dict(
     seq_len=SEQ_LEN,

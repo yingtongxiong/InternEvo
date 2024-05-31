@@ -26,6 +26,10 @@ def zigzag_ring_flash_attn_forward(
     alibi_slopes=None,  # pylint: disable=W0613
     deterministic=False,  # pylint: disable=W0613
 ):
+    
+    if gpc.get_global_rank() == 0:
+        print("P2P + AllGATHER FORWARD.........", flush=True)
+    
     assert causal is True, "zigzag ring is meaningless for causal=False"
     ring_comm = RingComm(ring_pg)
     p2p_comm = RingComm(p2p_pg)
@@ -126,15 +130,15 @@ def zigzag_ring_flash_attn_forward(
         return out, lse
         
 
-    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
         head_chunks = 1
     
-    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
     
     head_step = k.shape[-2] // head_chunks
@@ -208,6 +212,10 @@ def zigzag_double_ring_flash_attn_forward(
     alibi_slopes=None,  # pylint: disable=W0613
     deterministic=False,  # pylint: disable=W0613
 ):
+    
+    if gpc.get_global_rank() == 0:
+        print("DOUBLE RING FORWARD.........", flush=True)
+    
     assert causal is True, "zigzag ring is meaningless for causal=False"
     ring_comm = RingComm(ring_pg)
     p2p_comm = RingComm(p2p_pg)
@@ -316,15 +324,15 @@ def zigzag_double_ring_flash_attn_forward(
         return out, lse
         
 
-    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
         head_chunks = 1
     
-    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
     
     head_step = k.shape[-2] // head_chunks
@@ -386,7 +394,7 @@ def zigzag_double_ring_flash_attn_backward(
     deterministic=False,  # pylint: disable=W0613
 ):
     if gpc.get_global_rank() == 0:
-        print("full_kv_zigzag_with_full_dkv = False", flush=True)
+        print("DOUBLE RING BACKWARD.........", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
     
     ring_comm = RingComm(ring_pg)
@@ -398,9 +406,9 @@ def zigzag_double_ring_flash_attn_backward(
     # print(f"xyt global rank = {gpc.get_global_rank()}, ring_pg = {torch.distributed.get_process_group_ranks(ring_pg)}, p2p_pg = {torch.distributed.get_process_group_ranks(p2p_pg)}, local_p2p_pg = {torch.distributed.get_process_group_ranks(local_p2p_pg)}", flush=True)
     
 
-    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
@@ -566,7 +574,7 @@ def zigzag_double_ring_flash_attn_backward(
         
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
         
-    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
 
     dqs, next_dks, next_dvs = [], [], []
@@ -646,7 +654,7 @@ def zigzag_ring_flash_attn_backward(
     deterministic=False,  # pylint: disable=W0613
 ):
     if gpc.get_global_rank() == 0:
-        print("full_kv_zigzag_with_full_dkv = True", flush=True)
+        print("P2P + AllGATHER BACKWARD.........", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
     
     all_gather_comm = RingComm(all_gather_pg)
@@ -654,9 +662,9 @@ def zigzag_ring_flash_attn_backward(
     ring_comm = RingComm(ring_pg)
     dkv_comm = RingComm(p2p_pg)
 
-    head_overlap_enable = gpc.config.ring_attn_head_overlap.get("enable", False)
+    head_overlap_enable = gpc.config.ring_attn_overlap.get("enable", False)
     if head_overlap_enable:
-        head_chunks = gpc.config.ring_attn_head_overlap.get("head_chunks", 1) 
+        head_chunks = gpc.config.ring_attn_overlap.get("head_chunks", 1) 
         assert head_chunks > 1, "when enables the head overlap, the head chunks should be > 1."
         assert k.shape[-2] % head_chunks == 0, "the number of head should be divided by the head chunks."
     else:
@@ -811,7 +819,7 @@ def zigzag_ring_flash_attn_backward(
         return dq, full_dk, full_dv
 
 
-    window_size = gpc.config.ring_attn_head_overlap.get("window_size", 1)
+    window_size = gpc.config.ring_attn_overlap.get("window_size", 1)
     window_num = ring_comm.world_size // window_size
 
     dqs, dks, dvs = [], [], []
@@ -934,8 +942,11 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         assert alibi_slopes is None
         k = k.contiguous()
         v = v.contiguous()
+        
+        sliding_window_comm = gpc.config.ring_attn_overlap.get('comm', 'p2p_AG')
+        forward_func = zigzag_ring_flash_attn_forward if sliding_window_comm == 'p2p_AG' else zigzag_double_ring_flash_attn_forward
 
-        out, softmax_lse = zigzag_double_ring_flash_attn_forward(
+        out, softmax_lse = forward_func(
             ring_group, p2p_group, all_gather_group, q, k, v, softmax_scale=softmax_scale, dropout_p=dropout_p, causal=causal
         )
         # this should be out_padded
@@ -946,19 +957,20 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         ctx.window_size = window_size
         ctx.alibi_slopes = alibi_slopes
         ctx.deterministic = deterministic
-        ctx.with_full_dkv = with_full_dkv
         ctx.ring_group = ring_group
         ctx.p2p_group = p2p_group
         ctx.all_gather_group = all_gather_group
+        ctx.sliding_window_comm = sliding_window_comm
         return out if not return_softmax else (out, softmax_lse, None)
 
     @staticmethod
     def backward(ctx, dout, *args):  # pylint: disable=W0613
         q, k, v, out, softmax_lse = ctx.saved_tensors
-        with_full_dkv = ctx.with_full_dkv
+
+        sliding_window_comm = ctx.sliding_window_comm
 
         backward_func = (
-            zigzag_ring_flash_attn_backward if with_full_dkv else zigzag_double_ring_flash_attn_backward
+            zigzag_ring_flash_attn_backward if sliding_window_comm == 'p2p_AG' else zigzag_double_ring_flash_attn_backward
         )
 
         dq, dk, dv = backward_func(
