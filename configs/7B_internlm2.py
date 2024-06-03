@@ -20,6 +20,8 @@ ring_attn_overlap=dict(
     head_chunks=1, # when enable is True, the head_chunks should be > 1  
     window_size=4,
     comm='double_ring', # double_ring, p2p_AG
+    interleaved=False, # the group topo
+    use_ulysses_low=True,
 ) # it makes sense when the use_ring_attn="full_kv_zigzag"
 
 

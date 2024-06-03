@@ -299,7 +299,10 @@ if __name__ == "__main__":
     assert hasattr(gpc, "config") and gpc.config is not None
 
     from internlm.core.context.globals import set_seq_parallel_pg
-    set_seq_parallel_pg(gpc.config.uly_sp,gpc.config.ring_sp,gpc.get_global_rank(),gpc.get_world_size(ParallelMode.TENSOR), window_size=gpc.config.ring_attn_overlap.get('window_size', 1))
+    set_seq_parallel_pg(gpc.config.uly_sp, gpc.config.ring_sp, gpc.get_global_rank(), gpc.get_world_size(ParallelMode.TENSOR),
+                        use_ulysses_low=gpc.config.ring_attn_overlap.get('use_ulysses_low', True),
+                        window_size=gpc.config.ring_attn_overlap.get('window_size', 1),
+                        interleaved=gpc.config.ring_attn_overlap.get('interleaved', False))
 
     # initialize monitor manager context
     with initialize_monitor_manager(
