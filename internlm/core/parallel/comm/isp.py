@@ -639,13 +639,15 @@ class _SeqAllToAll(torch.autograd.Function):
         *input_: torch.Tensor,
     ) -> torch.Tensor:
 
-        if dist.get_world_size(group) <= 1:
-            return input_
-
         ctx.group = group
         ctx.scatter_idx = scatter_idx
         ctx.gather_idx = gather_idx
         seq_world_size = dist.get_world_size(group)
+        
+        if dist.get_world_size(group) <= 1:
+            if len(input_) == 1:
+                return input_[0]
+            return input_
 
         if len(input_) == 1:
             input_list = [t.contiguous() for t in torch.tensor_split(input_[0], seq_world_size, scatter_idx)]
@@ -685,12 +687,15 @@ class _SeqAllToAll(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_output: torch.Tensor) -> Tuple[None, torch.Tensor, None, None]:
         if dist.get_world_size(ctx.group) <= 1:
-            return (None, *grad_output, None, None)
+            # import pdb; pdb.set_trace()
+            return (None, None, None, *grad_output)
         if len(grad_output) == 1:
             return (None, None, None, _SeqAllToAll.apply(ctx.group, ctx.gather_idx, ctx.scatter_idx, *grad_output))
 
         return (None, None, None, *_SeqAllToAll.apply(ctx.group, ctx.gather_idx, ctx.scatter_idx, *grad_output))
 
+all2all_time = []
+overall_time = [] # all2all + attention
 
 # adpated from https://github.com/microsoft/DeepSpeed/blob/master/deepspeed/sequence/layer.py
 class DistributedAttention(nn.Module):
@@ -760,6 +765,8 @@ class DistributedAttention(nn.Module):
             uly_pg = PROCESS_GROUP.ULYSSES_PG
             self.spg = uly_pg
             self.sp_size = dist.get_world_size(self.spg)
+            
+        import time
 
         # kv shape: [1, packlen, 2, n_head, head_dim] or [batch, seqlen, 2, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
@@ -769,12 +776,65 @@ class DistributedAttention(nn.Module):
         if self.sp_size > num_head_kv:
             assert self.sp_size % num_head_kv == 0, "the num_head_kv should be divided by sp size."
             kv = expandKVPacked(kv, self.sp_size // num_head_kv, 3)
+        
+        torch.cuda.synchronize()
+        start_time = time.time()
+
         q, kv = _SeqAllToAll.apply(self.spg, [2, 3], [1, 1], q, kv)
+        torch.cuda.synchronize()
+        end_time = time.time()
+        
+        first_all2all = (end_time - start_time) * 1000
+
+        torch.cuda.synchronize()
+        start_time = time.time()
         context = self.local_attn(q, kv, **kwargs)
+        torch.cuda.synchronize()
+        end_time = time.time()
+        
+        attn = (end_time - start_time) * 1000
+        
+        torch.cuda.synchronize()
+        start_time = time.time()
         context = _SeqAllToAll.apply(self.spg, 1, 2, context)
+        torch.cuda.synchronize()
+        end_time = time.time()
+        
+        second_all2all = (end_time - start_time) * 1000
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
+        
+        if gpc.is_forward is True:
+            
+            global all2all_time
+            global overall_time
+        
+            if gpc.step_id >= 15:
+                all2all_time.append(first_all2all + second_all2all)
+                overall_time.append(first_all2all + second_all2all + attn)
+            
+            if gpc.step_id == 19:
+                if len(all2all_time) == 10:
+                    all2all_time.sort()
+                    overall_time.sort()
+                    
+                    all2all_time = all2all_time[0:-1]
+                    overall_time = overall_time[0:-1]
+                    import numpy as np
+                    all2all_time_avg = np.mean(all2all_time)
+                    overall_time_avg = np.mean(overall_time)
+                    
+                    all2all_time_std = np.std(all2all_time)
+                    overall_time_std = np.std(overall_time)
+                    
+                    if gpc.get_global_rank() == 0:
+                        print(f"all2all time = {all2all_time}", flush=True)
+                        print(f"overall time = {overall_time}", flush=True)
+                        print(f"average all2all time = {all2all_time_avg}", flush=True)
+                        print(f"average overall time = {overall_time_avg}", flush=True)
+                        print(f"std all2all time = {all2all_time_std}", flush=True)
+                        print(f"std overall time = {overall_time_std}", flush=True)
 
         return context
 
