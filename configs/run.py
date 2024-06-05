@@ -8,89 +8,89 @@ with open('template.py', 'r', encoding='utf-8') as file:
 
 # # 定义替换变量的值
 # test1_variables = {
-#     "num_kv_attention_head": [8, 32],
+#     "num_kv_attention_head": [8, 64],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [2, 4, 8, 16, 32, 64],
 #     "window_size": [1],
 #     "comm_type": ["p2p_AG"],
-#     "activation_ckpt": [False, True]
+#     "activation_ckpt": [True]
 # }
 
 # variables = test1_variables
-# root_path = "test1/"
+# root_path = "test1_Exp2_70/"
 
 # 定义替换变量的值
 # test2_variables = {
-#     "num_kv_attention_head": [8, 32],
+#     "num_kv_attention_head": [8, 64],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [64],
-#     "window_size": [2, 4, 8],
+#     "window_size": [1, 2, 4, 8],
 #     "comm_type": ["double_ring"],
-#     "activation_ckpt": [False, True]
+#     "activation_ckpt": [True]
 # }
 
 # variables = test2_variables
-# root_path = "test2/"
+# root_path = "test2_Exp2_70/"
 
 # test3_variables = {
-#     "num_kv_attention_head": [8, 32],
+#     "num_kv_attention_head": [8, 64],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [64],
-#     "window_size": [2, 4, 8],
+#     "window_size": [1, 2, 4, 8],
 #     "comm_type": ["p2p_AG"],
-#     "activation_ckpt": [False, True]
+#     "activation_ckpt": [True]
 # }
 
 # variables = test3_variables
-# root_path = "test3/"
+# root_path = "test3_Exp2_70/"
 
 # test4_variables = {
-#     "num_kv_attention_head": [8, 32],
+#     "num_kv_attention_head": [8, 64],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [16],
-#     "window_size": [2, 4, 8],
+#     "window_size": [1, 2, 4, 8],
 #     "comm_type": ["double_ring"],
-#     "activation_ckpt": [False, True]
+#     "activation_ckpt": [True]
 # }
 
 # variables = test4_variables
-# root_path = "test4/"
+# root_path = "test4_Exp2_70/"
 
 # test5_variables = {
-#     "num_kv_attention_head": [8, 32],
+#     "num_kv_attention_head": [8, 64],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [16],
-#     "window_size": [2, 4, 8],
+#     "window_size": [1, 2, 4, 8],
 #     "comm_type": ["p2p_AG"],
-#     "activation_ckpt": [False, True]
+#     "activation_ckpt": [True]
 # }
 
 # variables = test5_variables
-# root_path = "test5/"
+# root_path = "test5_Exp2_70/"
 
 # test6_variables = {
-#     "num_kv_attention_head": [8, 32],
+#     "num_kv_attention_head": [8, 64],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [8],
-#     "window_size": [2, 4, 8],
+#     "window_size": [1, 2, 4, 8],
 #     "comm_type": ["double_ring"],
-#     "activation_ckpt": [False, True]
+#     "activation_ckpt": [True]
 # }
 
 # variables = test6_variables
-# root_path = "test6/"
+# root_path = "test6_Exp2_70/"
 
 test7_variables = {
-    "num_kv_attention_head": [8, 32],
+    "num_kv_attention_head": [8, 64],
     # "uly_sp": [1, 2, 4, 8, 16, ],
     "ring_sp": [8],
-    "window_size": [2, 4, 8],
+    "window_size": [1, 2, 4, 8],
     "comm_type": ["p2p_AG"],
-    "activation_ckpt": [False, True]
+    "activation_ckpt": [True]
 }
 
 variables = test7_variables
-root_path = "test7/"
+root_path = "test7_Exp2_70/"
 
 
 output_folder = root_path
