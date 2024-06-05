@@ -112,6 +112,9 @@ def set_seq_parallel_pg(sp_ulysses_degree, sp_ring_degree, rank, world_size, use
 
     num_ulysses_pgs = sp_ring_degree  # world_size // sp_ulysses_degree
     num_ring_pgs = sp_ulysses_degree  #
+    
+    if window_size == sp_ring_degree or window_size >= 8:
+        interleaved = False
 
     if use_ulysses_low:
         for dp_rank in range(dp_degree):

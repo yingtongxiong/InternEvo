@@ -466,7 +466,7 @@ def args_sanity_check():
     if  "ring_attn_overlap" not in gpc.config:
         gpc.config._add_item("ring_attn_overlap", {'enable': False, 'head_chunks':1, 'window_size':1, 'comm': 'p2p_AG', 'interleaved': False, 'use_ulysses_low': True})
     else:
-        if gpc.config.ring_attn_overlap.use_ulysses_low is True:
+        if gpc.config.ring_attn_overlap.use_ulysses_low is True and gpc.config.uly_sp > 1:
             assert gpc.config.ring_attn_overlap.interleaved is False, "when enable use_ulysses_low, it recommend that interleaved should be False."
         assert gpc.config.ring_attn_overlap.comm in ('p2p_AG', 'double_ring'), "the comm should p2p_AG or double_ring."
 

@@ -177,6 +177,7 @@ def main(args):
     with initialize_llm_profile(profiling=args.profiling, start_time=current_time) as prof:
         # start iterating the train data and begin training
         for batch_count in range(train_state.batch_count, total_steps):
+            gpc.step_id = batch_count
             empty_cache_and_diag(batch_count, interval=gpc.config.data.empty_cache_and_diag_interval)
             # internlm_accelerator.memory._record_memory_history()
             start_time = time.time()
