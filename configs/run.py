@@ -8,20 +8,20 @@ with open('template.py', 'r', encoding='utf-8') as file:
 
 # # 定义替换变量的值
 # test1_variables = {
-#     "num_kv_attention_head": [8, 64],
+#     "num_kv_attention_head": [8, 32],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [2, 4, 8, 16, 32, 64],
 #     "window_size": [1],
-#     "comm_type": ["p2p_AG"],
+#     "comm_type": ["double_ring"],
 #     "activation_ckpt": [True]
 # }
 
 # variables = test1_variables
-# root_path = "test1_Exp2_70/"
+# root_path = "7B/test1_Exp1/"
 
-# 定义替换变量的值
+# # 定义替换变量的值
 # test2_variables = {
-#     "num_kv_attention_head": [8, 64],
+#     "num_kv_attention_head": [8, 32],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [64],
 #     "window_size": [1, 2, 4, 8],
@@ -30,10 +30,10 @@ with open('template.py', 'r', encoding='utf-8') as file:
 # }
 
 # variables = test2_variables
-# root_path = "test2_Exp2_70/"
+# root_path = "7B/test2_Exp1/"
 
 # test3_variables = {
-#     "num_kv_attention_head": [8, 64],
+#     "num_kv_attention_head": [8, 32],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [64],
 #     "window_size": [1, 2, 4, 8],
@@ -42,10 +42,10 @@ with open('template.py', 'r', encoding='utf-8') as file:
 # }
 
 # variables = test3_variables
-# root_path = "test3_Exp2_70/"
+# root_path = "7B/test3_Exp1/"
 
 # test4_variables = {
-#     "num_kv_attention_head": [8, 64],
+#     "num_kv_attention_head": [8, 32],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [16],
 #     "window_size": [1, 2, 4, 8],
@@ -54,10 +54,10 @@ with open('template.py', 'r', encoding='utf-8') as file:
 # }
 
 # variables = test4_variables
-# root_path = "test4_Exp2_70/"
+# root_path = "7B/test4_Exp1/"
 
 # test5_variables = {
-#     "num_kv_attention_head": [8, 64],
+#     "num_kv_attention_head": [8, 32],
 #     # "uly_sp": [1, 2, 4, 8, 16, ],
 #     "ring_sp": [16],
 #     "window_size": [1, 2, 4, 8],
@@ -66,31 +66,31 @@ with open('template.py', 'r', encoding='utf-8') as file:
 # }
 
 # variables = test5_variables
-# root_path = "test5_Exp2_70/"
+# root_path = "7B/test5_Exp1/"
 
-# test6_variables = {
-#     "num_kv_attention_head": [8, 64],
-#     # "uly_sp": [1, 2, 4, 8, 16, ],
-#     "ring_sp": [8],
-#     "window_size": [1, 2, 4, 8],
-#     "comm_type": ["double_ring"],
-#     "activation_ckpt": [True]
-# }
-
-# variables = test6_variables
-# root_path = "test6_Exp2_70/"
-
-test7_variables = {
-    "num_kv_attention_head": [8, 64],
+test6_variables = {
+    "num_kv_attention_head": [8, 32],
     # "uly_sp": [1, 2, 4, 8, 16, ],
     "ring_sp": [8],
     "window_size": [1, 2, 4, 8],
-    "comm_type": ["p2p_AG"],
+    "comm_type": ["double_ring"],
     "activation_ckpt": [True]
 }
 
-variables = test7_variables
-root_path = "test7_Exp2_70/"
+variables = test6_variables
+root_path = "7B/test6_Exp1/"
+
+# test7_variables = {
+#     "num_kv_attention_head": [8, 32],
+#     # "uly_sp": [1, 2, 4, 8, 16, ],
+#     "ring_sp": [8],
+#     "window_size": [1, 2, 4, 8],
+#     "comm_type": ["p2p_AG"],
+#     "activation_ckpt": [True]
+# }
+
+# variables = test7_variables
+# root_path = "7B/test7_Exp1/"
 
 
 output_folder = root_path
@@ -134,7 +134,7 @@ for i, combination in enumerate(combinations):
     
     # 运行命令
     # command = f"srun -p Intern5 -N 8 -n 64 --ntasks-per-node=8 --gpus-per-task=1 python ../train.py --config ./{output_path} --profiling 2>&1 | tee '{log_path}'"
-    command = f"srun -p Intern5 -N 8 -n 64 --ntasks-per-node=8 --gpus-per-task=1 python ../train.py --config ./{output_path} --profiling 2>&1 | tee '{log_path}'"
+    command = f"srun -p llm_s --preempt -N 8 -n 64 --ntasks-per-node=8 --gpus-per-task=1 --cpus-per-task=16 python ../train.py --config ./{output_path} --profiling 2>&1 | tee '{log_path}'"
     process = subprocess.run(command, shell=True)
     
     if process.returncode != 0:

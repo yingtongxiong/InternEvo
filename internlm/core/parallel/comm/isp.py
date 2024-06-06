@@ -816,11 +816,16 @@ class DistributedAttention(nn.Module):
             
             if gpc.step_id == 19:
                 if len(all2all_time) == 10:
+                    
+                    if gpc.get_global_rank() == 0:
+                        print(f"origin all2all time = {all2all_time}", flush=True)
+                        print(f"origin overall time = {overall_time}", flush=True)
+                    
                     all2all_time.sort()
                     overall_time.sort()
                     
-                    all2all_time = all2all_time[0:-1]
-                    overall_time = overall_time[0:-1]
+                    all2all_time = all2all_time[0:-2]
+                    overall_time = overall_time[0:-2]
                     import numpy as np
                     all2all_time_avg = np.mean(all2all_time)
                     overall_time_avg = np.mean(overall_time)
