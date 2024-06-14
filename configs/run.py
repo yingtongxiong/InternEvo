@@ -8,7 +8,7 @@ with open('template.py', 'r', encoding='utf-8') as file:
 
 # 定义替换变量的值
 test1_variables = {
-    'seq_len': [32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024, 1024 * 1024],
+    'seq_len': [128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024],
     "num_kv_attention_head": [8, 32],
     # "uly_sp": [1, 2, 4, 8, 16, ],
     "ring_sp": [2, 4, 8, 16, 32, 64],
@@ -18,7 +18,8 @@ test1_variables = {
 }
 
 variables = test1_variables
-root_path = "seq/test1_Exp1"
+root_path = "e2e/head_first/7B/selectiveFalse"
+# root_path = "seq/test1_Exp1"
 
 # 定义替换变量的值
 # test2_variables = {
@@ -135,7 +136,7 @@ for i, combination in enumerate(combinations):
     
     # 运行命令
     # command = f"srun -p Intern5 -N 8 -n 64 --ntasks-per-node=8 --gpus-per-task=1 python ../train.py --config ./{output_path} --profiling 2>&1 | tee '{log_path}'"
-    command = f"srun -p Intern5 -N 8 -n 64 --ntasks-per-node=8 --gpus-per-task=1 python ../train.py --config ./{output_path} --profiling 2>&1 | tee '{log_path}'"
+    command = f"srun -p llm_s -N 8 -n 64 --ntasks-per-node=8 --gpus-per-task=1 python ../train.py --config ./{output_path} 2>&1 | tee '{log_path}'"
     process = subprocess.run(command, shell=True)
     
     if process.returncode != 0:

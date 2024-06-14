@@ -31,8 +31,8 @@ def zigzag_ring_flash_attn_forward(
     deterministic=False,  # pylint: disable=W0613
 ):
 
-    if gpc.get_global_rank() == 0:
-        print("P2P + AllGATHER FORWARD.........", flush=True)
+    # if gpc.get_global_rank() == 0:
+    #     print("P2P + AllGATHER FORWARD.........", flush=True)
 
     assert causal is True, "zigzag ring is meaningless for causal=False"
     ring_comm = RingComm(ring_pg)
@@ -217,8 +217,8 @@ def zigzag_double_ring_flash_attn_forward(
     deterministic=False,  # pylint: disable=W0613
 ):
 
-    if gpc.get_global_rank() == 0:
-        print("DOUBLE RING FORWARD.........", flush=True)
+    # if gpc.get_global_rank() == 0:
+    #     print("DOUBLE RING FORWARD.........", flush=True)
 
     assert causal is True, "zigzag ring is meaningless for causal=False"
     ring_comm = RingComm(ring_pg)
@@ -396,8 +396,8 @@ def zigzag_double_ring_flash_attn_backward(
     alibi_slopes=None,  # pylint: disable=W0613
     deterministic=False,  # pylint: disable=W0613
 ):
-    if gpc.get_global_rank() == 0:
-        print("DOUBLE RING BACKWARD.........", flush=True)
+    # if gpc.get_global_rank() == 0:
+    #     print("DOUBLE RING BACKWARD.........", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
 
     ring_comm = RingComm(ring_pg)
@@ -657,8 +657,8 @@ def zigzag_ring_flash_attn_backward(
     alibi_slopes=None,  # pylint: disable=W0613
     deterministic=False,  # pylint: disable=W0613
 ):
-    if gpc.get_global_rank() == 0:
-        print("P2P + AllGATHER BACKWARD.........", flush=True)
+    # if gpc.get_global_rank() == 0:
+    #     print("P2P + AllGATHER BACKWARD.........", flush=True)
     assert causal is True, "zigzag ring is meaningless for causal=False"
 
     all_gather_comm = RingComm(all_gather_pg)

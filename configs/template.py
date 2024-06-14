@@ -1,4 +1,4 @@
-JOB_NAME = f"kv{num_kv_attention_head}_ring{ring_sp}_ws{window_size}_comm_{comm_type}_seqlen{seq_len}_interleaved"
+JOB_NAME = f"kv{num_kv_attention_head}_ring{ring_sp}_ws{window_size}_comm_{comm_type}_seqlen{seq_len}_selectiveTrue"
 model_type="INTERNLM2_PUBLIC"
 DO_ALERT = False
 
@@ -8,7 +8,7 @@ HIDDEN_SIZE = 4096
 NUM_ATTENTION_HEAD = 32
 NUM_KV_ATTENTION_HEAD = {num_kv_attention_head}
 MLP_RATIO = 3.5
-NUM_LAYER = 2
+NUM_LAYER = 32
 
 
 uly_sp={uly_sp}
@@ -68,7 +68,7 @@ data = dict(
     # defaults to 0, means disable evaluate
     valid_every=0,
     pack_sample_into_one=True,
-    total_steps=20,
+    total_steps=10,
     skip_batches="",
     # rampup_batch_size (str): A string with three space-separated integers representing the
     #       starting batch size, the increment, and the number of steps between
