@@ -498,6 +498,10 @@ def initialize_llm_profile(profiling: bool = False, start_time: str = None):
 tgses = []
 tflopses = []
 
+tgses = []
+tflopses = []
+
+
 @llm_timeout(func_name="record_current_batch_training_metrics")
 def record_current_batch_training_metrics(
     get_tflops_func,
@@ -617,6 +621,23 @@ def record_current_batch_training_metrics(
                 print(f"avg tflops = {avg_tflops}", flush=True)
                 print(f"mfu = {avg_tflops / 312 * 0.75}", flush=True)
             
+
+        if batch_count >= 5:
+            tgses.append(tgs_origin)
+            tflopses.append(tflops)
+
+        if batch_count == 9:
+            import numpy as np
+
+            avg_tgs = np.mean(tgses)
+            avg_tflops = np.mean(tflopses)
+
+            if gpc.get_global_rank() == 0:
+                print(f"tgses: {tgses}", flush=True)
+                print(f"tflopses: {tflopses}", flush=True)
+                print(f"avg tgs = {avg_tgs}", flush=True)
+                print(f"avg tflops = {avg_tflops}", flush=True)
+                print(f"mfu = {avg_tflops / 312 * 0.75}", flush=True)
 
         infos = {
             "tflops": tflops,

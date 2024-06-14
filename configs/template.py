@@ -18,7 +18,7 @@ full_kv_zigzag_with_full_dkv=False
 selective_checkpoint = True
 ring_attn_overlap=dict(
     enable=False,
-    head_chunks=1, # when enable is True, the head_chunks should be > 1  
+    head_chunks=1,  # when enable is True, the head_chunks should be > 1
     window_size={window_size},
     comm='{comm_type}', # double_ring, p2p_AG
     interleaved=False, # the group topo
@@ -55,7 +55,7 @@ ckpt = dict(
     oss_snapshot_freq=int(CHECKPOINT_EVERY / 2),  # snapshot ckpt save frequency.
 )
 
-TRAIN_FOLDER = None #'/mnt/petrelfs/share_data/llm_data/0715_llama_tokenized_refined_real/train/'
+TRAIN_FOLDER = None  #'/mnt/petrelfs/share_data/llm_data/0715_llama_tokenized_refined_real/train/'
 VALID_FOLDER = None  # "/path/to/dataset"
 data = dict(
     seq_len=SEQ_LEN,
@@ -200,7 +200,7 @@ parallel = dict(
     zero1=dict(size=-1),
     tensor=dict(size=64, mode="isp"),
     pipeline=dict(size=1, interleaved_overlap=True),
-    weight=dict(size=8, overlap=False, memory_pool=False),
+    weight=dict(size=8, overlap=True, memory_pool=True),
 )
 
 cudnn_deterministic = False
