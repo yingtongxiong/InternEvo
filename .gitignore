@@ -146,3 +146,16 @@ llm_ckpts
 events.*
 memory_trace
 RUN*/
+<<<<<<< Updated upstream
+=======
+
+# configs
+configs/test*
+configs/RUN
+configs/seq
+configs/70B
+configs/7B
+configs/e2e
+configs/7B-e2e-overlap
+configs/7B-time
+>>>>>>> Stashed changes
