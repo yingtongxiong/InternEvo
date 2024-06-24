@@ -52,7 +52,7 @@ def zigzag_double_ring_flash_attn_forward(
         )
         return block_out, block_lse
 
-    def _head_first_window_forward(q, k, v):
+    def _first_window_forward(q, k, v):
         out = None
         lse = None
 
@@ -94,7 +94,7 @@ def zigzag_double_ring_flash_attn_forward(
 
         return out, lse
 
-    def _head_other_window_forward(out, lse, q, k, v, window_num_idx):
+    def _other_window_forward(out, lse, q, k, v, window_num_idx):
 
         if window_num_idx > p2p_comm.rank:
 
@@ -158,10 +158,9 @@ def zigzag_double_ring_flash_attn_forward(
             p2p_comm.commit()
 
         if j == 0:
-            # out, lse = _head_first_window_forward(q[..., i * head_step : (i + 1) * head_step, :], local_k, local_v)
-            out, lse = _head_first_window_forward(q, local_k, local_v)
+            out, lse = _first_window_forward(q, local_k, local_v)
         else:
-            out, lse = _head_other_window_forward(
+            out, lse = _other_window_forward(
                 out, lse, q, local_k, local_v, window_num_idx=j
             )
 
@@ -172,11 +171,11 @@ def zigzag_double_ring_flash_attn_forward(
 
 
 def zigzag_double_ring_flash_attn_backward(
-    ring_pg,
-    p2p_pg,
-    local_p2p_pg,
-    dkv_p2p_pg,
-    dkv_local_p2p_pg,
+    context_pg,
+    inter_window_pg,
+    intra_window_pg,
+    dkv_inter_window_pg,
+    dkv_intra_window_pg,
     dout,
     q,
     k,
@@ -193,11 +192,11 @@ def zigzag_double_ring_flash_attn_backward(
 
     assert causal is True, "zigzag ring is meaningless for causal=False"
 
-    ring_comm = RingComm(ring_pg)
-    dkv_comm = RingComm(dkv_p2p_pg)
-    kv_comm = RingComm(p2p_pg)
-    local_kv_comm = RingComm(local_p2p_pg)
-    local_dkv_comm = RingComm(dkv_local_p2p_pg)
+    context_comm = RingComm(context_pg)
+    dkv_comm = RingComm(dkv_inter_window_pg)
+    kv_comm = RingComm(inter_window_pg)
+    local_kv_comm = RingComm(intra_window_pg)
+    local_dkv_comm = RingComm(dkv_intra_window_pg)
 
     block_seq_len = q.shape[1] // 2
 
@@ -225,7 +224,7 @@ def zigzag_double_ring_flash_attn_backward(
             causal,
         )
 
-    def _head_first_window_backward(dout, q, k, v, out, softmax_lse):
+    def _first_window_backward(dout, q, k, v, out, softmax_lse):
 
         dk_comm_buffer, dv_comm_buffer = None, None
         dq, dk, dv = None, None, None
@@ -280,7 +279,7 @@ def zigzag_double_ring_flash_attn_backward(
 
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
 
-    def _head_other_window_backward(dout, q, k, v, dq, dk, dv, out, softmax_lse, window_num_idx, inter_window_dkv_comm):
+    def _other_window_backward(dout, q, k, v, dq, dk, dv, out, softmax_lse, window_num_idx, inter_window_dkv_comm):
 
         dk_comm_buffer, dv_comm_buffer = None, None
 
@@ -361,7 +360,7 @@ def zigzag_double_ring_flash_attn_backward(
         return dq.to(q.dtype), next_dk.to(q.dtype), next_dv.to(q.dtype)
 
     window_size = gpc.config.parallel.sequence_2D.get("window_size", 1)
-    window_num = ring_comm.world_size // window_size
+    window_num = context_comm.world_size // window_size
 
     local_k = k
     local_v = v
@@ -384,7 +383,7 @@ def zigzag_double_ring_flash_attn_backward(
             dv = next_dv
 
         if j == 0:
-            dq, dk, dv = _head_first_window_backward(
+            dq, dk, dv = _first_window_backward(
                 dout,
                 q,
                 local_k,
@@ -393,7 +392,7 @@ def zigzag_double_ring_flash_attn_backward(
                 softmax_lse,
             )
         else:
-            dq, dk, dv = _head_other_window_backward(
+            dq, dk, dv = _other_window_backward(
                 dout,
                 q,
                 local_k,
@@ -439,11 +438,11 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         alibi_slopes,
         deterministic,
         return_softmax,
-        ring_group,
-        p2p_group=None,
-        all_gather_group=None,
-        dkv_p2p_group=None,
-        dkv_all_gather_group=None,
+        context_group,
+        inter_window_group=None,
+        intra_window_group=None,
+        dkv_inter_window_group=None,
+        dkv_intra_window_group=None,
         layer_idx=0,
     ):
         if softmax_scale is None:
@@ -457,13 +456,11 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         if gpc.is_forward is False and gpc.config.selective_checkpoint:
             assert layer_idx in fa_output_mapping
             out, softmax_lse = fa_output_mapping.pop(layer_idx)
-            # if gpc.get_global_rank() == 0:
-            #     print(f"ht debug get fa output with id:{layer_idx}", flush=True)
         else:
             out, softmax_lse = zigzag_double_ring_flash_attn_forward(
-                ring_group,
-                p2p_group,
-                all_gather_group,
+                context_group,
+                inter_window_group,
+                intra_window_group,
                 q,
                 k,
                 v,
@@ -475,8 +472,6 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         # store attn forward output to avoid re-computation of attn when activation checkpoint is enabled
         if gpc.is_forward and gpc.config.selective_checkpoint:
             fa_output_mapping[layer_idx] = (out, softmax_lse)
-            # if gpc.get_global_rank() == 0:
-            #     print(f"ht debug store fa output with id:{layer_idx}", flush=True)
 
         # this should be out_padded
         ctx.save_for_backward(q, k, v, out, softmax_lse)
@@ -486,29 +481,25 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         ctx.window_size = window_size
         ctx.alibi_slopes = alibi_slopes
         ctx.deterministic = deterministic
-        ctx.ring_group = ring_group
-        ctx.p2p_group = p2p_group
-        ctx.all_gather_group = all_gather_group
-        ctx.dkv_p2p_group = dkv_p2p_group
-        ctx.dkv_all_gather_group = dkv_all_gather_group
+        ctx.context_group = context_group
+        ctx.inter_window_group = inter_window_group
+        ctx.intra_window_group = intra_window_group
+        ctx.dkv_inter_window_group = dkv_inter_window_group
+        ctx.dkv_intra_window_group = dkv_intra_window_group
         return out if not return_softmax else (out, softmax_lse, None)
 
     @staticmethod
     def backward(ctx, dout, *args):  # pylint: disable=W0613
-        import time
 
-        # torch.distributed.barrier()
         torch.cuda.synchronize()
-        # start_time = time.time()
         q, k, v, out, softmax_lse = ctx.saved_tensors
 
-
         dq, dk, dv = zigzag_double_ring_flash_attn_backward(
-            ctx.ring_group,
-            ctx.p2p_group,
-            ctx.all_gather_group,
-            ctx.dkv_p2p_group,
-            ctx.dkv_all_gather_group,
+            ctx.context_group,
+            ctx.inter_window_group,
+            ctx.intra_window_group,
+            ctx.dkv_inter_window_group,
+            ctx.dkv_intra_window_group,
             dout,
             q,
             k,
@@ -523,30 +514,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
             deterministic=ctx.deterministic,
         )
 
-        # torch.distributed.barrier()
         torch.cuda.synchronize()
-        # end_time = time.time()
-        # global attn_backward_time
-        # if gpc.step_id >= 5:
-        #     attn_backward_time.append((end_time - start_time) * 1000)
-        # if gpc.step_id == 9:
-        #     if len(attn_backward_time) == 100:
-        #         if gpc.get_global_rank() == 0:
-        #             print(f"origin attn backward time = {attn_backward_time}", flush=True)
-
-        #             attn_backward_time.sort()
-
-        #             attn_backward_time = attn_backward_time[0:-5]
-        #             import numpy as np
-
-        #             all2all_time_avg = np.mean(attn_backward_time)
-
-        #             all2all_time_std = np.std(attn_backward_time)
-
-        #             if gpc.get_global_rank() == 0:
-        #                 print(f"attn backward time = {attn_backward_time}", flush=True)
-        #                 print(f"average attn backward time = {all2all_time_avg}", flush=True)
-        #                 print(f"std attn backward time = {all2all_time_std}", flush=True)
 
         return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None, None
 
@@ -561,13 +529,15 @@ def zigzag_ring_flash_attn_kvpacked_func_with_sliding_window(
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
-    ring_group=None,
-    p2p_group=None,
-    all_gather_group=None,
-    dkv_p2p_group=None,
-    dkv_all_gather_group=None,
+    context_group=None,
+    inter_window_group=None,
+    intra_window_group=None,
+    dkv_inter_window_group=None,
+    dkv_intra_window_group=None,
     layer_idx=0,
 ):
+    if gpc.get_global_rank() == 0:
+        print(f"====running KV PACKED====")
     return ZigZagRingFlashAttnFunc.apply(
         q,
         kv[:, :, 0],
@@ -579,10 +549,90 @@ def zigzag_ring_flash_attn_kvpacked_func_with_sliding_window(
         alibi_slopes,
         deterministic,
         return_attn_probs,
-        ring_group,
-        p2p_group,
-        all_gather_group,
-        dkv_p2p_group,
-        dkv_all_gather_group,
+        context_group,
+        inter_window_group,
+        intra_window_group,
+        dkv_inter_window_group,
+        dkv_intra_window_group,
+        layer_idx,
+    )
+
+
+def zigzag_ring_flash_attn_qkvpacked_func_with_sliding_window(
+    qkv,
+    dropout_p=0.0,
+    softmax_scale=None,
+    causal=False,
+    window_size=(-1, -1),
+    alibi_slopes=None,
+    deterministic=False,
+    return_attn_probs=False,
+    context_group=None,
+    inter_window_group=None,
+    intra_window_group=None,
+    dkv_inter_window_group=None,
+    dkv_intra_window_group=None,
+    layer_idx=0,
+):
+    if gpc.get_global_rank() == 0:
+        print(f"====running QKV PACKED====")
+            
+    return ZigZagRingFlashAttnFunc.apply(
+        qkv[:, :, 0],
+        qkv[:, :, 1],
+        qkv[:, :, 2],
+        dropout_p,
+        softmax_scale,
+        causal,
+        window_size,
+        alibi_slopes,
+        deterministic,
+        return_attn_probs,
+        context_group,
+        inter_window_group,
+        intra_window_group,
+        dkv_inter_window_group,
+        dkv_intra_window_group,
+        layer_idx,
+    )
+
+def zigzag_ring_flash_attn_qkvsplited_func_with_sliding_window(
+    q,
+    k,
+    v,
+    dropout_p=0.0,
+    softmax_scale=None,
+    causal=False,
+    window_size=(-1, -1),
+    alibi_slopes=None,
+    deterministic=False,
+    return_attn_probs=False,
+    context_group=None,
+    inter_window_group=None,
+    intra_window_group=None,
+    dkv_inter_window_group=None,
+    dkv_intra_window_group=None,
+    layer_idx=0,
+):
+
+    if gpc.get_global_rank() == 0:
+        print(f"====running QKV SPLITED====")
+        
+    return ZigZagRingFlashAttnFunc.apply(
+        q,
+        k,
+        v,
+        dropout_p,
+        softmax_scale,
+        causal,
+        window_size,
+        alibi_slopes,
+        deterministic,
+        return_attn_probs,
+        context_group,
+        inter_window_group,
+        intra_window_group,
+        dkv_inter_window_group,
+        dkv_intra_window_group,
         layer_idx,
     )
