@@ -15,8 +15,8 @@ from einops import rearrange, repeat
 from torch import nn
 
 from internlm.accelerator import AcceleratorType, get_accelerator
+from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.context.globals import PROCESS_GROUP
 from internlm.core.parallel.comm.isp import auto_wrap_distributed_attention
 from internlm.model.ops.ring_flash_attn import (
     ring_flash_attn_func,
@@ -26,15 +26,12 @@ from internlm.model.ops.ring_flash_attn import (
     ring_flash_attn_varlen_kvpacked_func,
     ring_flash_attn_varlen_qkvpacked_func,
     zigzag_ring_flash_attn_func,
-    zigzag_ring_flash_attn_func_with_full_kv,
     zigzag_ring_flash_attn_kvpacked_func,
-    zigzag_ring_flash_attn_kvpacked_func_with_full_kv,
+    zigzag_ring_flash_attn_kvpacked_func_with_sliding_window,
     zigzag_ring_flash_attn_qkvpacked_func,
-    zigzag_ring_flash_attn_qkvpacked_func_with_full_kv,
     zigzag_ring_flash_attn_varlen_func,
     zigzag_ring_flash_attn_varlen_kvpacked_func,
     zigzag_ring_flash_attn_varlen_qkvpacked_func,
-    zigzag_ring_flash_attn_kvpacked_func_with_sliding_window,
 )
 from internlm.model.ops.utils import pack_output_after_attn, unpack_qkv_before_attn
 from internlm.utils.common import get_current_device
@@ -96,9 +93,6 @@ class AttnType(Enum):
     Torch = "torch"
     # GPU Flash Attention
     Flash = "flash-attn"
-    RingFlash = "ring-flash-attn"
-    ZigZagFlash = "zigzag-ring-flash-attn"
-    FullKVZigZagFlash = "zigzag-ring-flash-attn-with-full-kv"
     SlidingWindowZigZagFlash = "zigzag-ring-flash-attn-with-sliding-window"
     # NPU Flash Attention
     NPUFlash = "npu-flash-attn"
@@ -251,12 +245,14 @@ def _ring_flash_varlen_qkvpacked_attn(
     qkv: torch.Tensor, cu_seqlens, max_seqlen, dropout_p, softmax_scale=None, causal=False
 ):
     return ring_flash_attn_varlen_qkvpacked_func(
-        qkv, cu_seqlens, max_seqlen, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
+        qkv, cu_seqlens, max_seqlen, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
     )
 
 
 def _ring_flash_fixedlen_qkvpacked_attn(qkv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False):
-    return ring_flash_attn_qkvpacked_func(qkv, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG)
+    return ring_flash_attn_qkvpacked_func(
+        qkv, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
+    )
 
 
 def _ring_flash_varlen_kvpacked_attn(
@@ -273,14 +269,16 @@ def _ring_flash_varlen_kvpacked_attn(
     assert cu_seqlens_q.equal(cu_seqlens_k), "ring_flash_attn_varlen_kvpacked_func only support same q/k cu_seqlens"
 
     return ring_flash_attn_varlen_kvpacked_func(
-        q, kv, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
+        q, kv, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
     )
 
 
 def _ring_flash_fixedlen_kvpacked_attn(
     q: torch.Tensor, kv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False
 ):
-    return ring_flash_attn_kvpacked_func(q, kv, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG)
+    return ring_flash_attn_kvpacked_func(
+        q, kv, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
+    )
 
 
 def _ring_flash_varlen_qkvsplited_attn(
@@ -298,12 +296,12 @@ def _ring_flash_varlen_qkvsplited_attn(
     assert cu_seqlens_q.equal(cu_seqlens_k), "ring_flash_attn_varlen_kvpacked_func only support same q/k cu_seqlens"
 
     return ring_flash_attn_varlen_func(
-        q, k, v, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
+        q, k, v, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
     )
 
 
 def _ring_flash_fixedlen_qkvsplited_attn(q, k, v, dropout_p=0.0, softmax_scale=None, causal=False):
-    return ring_flash_attn_func(q, k, v, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG)
+    return ring_flash_attn_func(q, k, v, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT))
 
 
 ###############################
@@ -315,12 +313,14 @@ def _zigzag_ring_flash_varlen_qkvpacked_attn(
     qkv: torch.Tensor, cu_seqlens, max_seqlen, dropout_p, softmax_scale=None, causal=False
 ):
     return zigzag_ring_flash_attn_varlen_qkvpacked_func(
-        qkv, cu_seqlens, max_seqlen, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
+        qkv, cu_seqlens, max_seqlen, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
     )
 
 
 def _zigzag_ring_flash_fixedlen_qkvpacked_attn(qkv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False):
-    return zigzag_ring_flash_attn_qkvpacked_func(qkv, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG)
+    return zigzag_ring_flash_attn_qkvpacked_func(
+        qkv, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
+    )
 
 
 def _zigzag_ring_flash_varlen_kvpacked_attn(
@@ -337,14 +337,16 @@ def _zigzag_ring_flash_varlen_kvpacked_attn(
     assert cu_seqlens_q.equal(cu_seqlens_k), "ring_flash_attn_varlen_kvpacked_func only support same q/k cu_seqlens"
 
     return zigzag_ring_flash_attn_varlen_kvpacked_func(
-        q, kv, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
+        q, kv, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
     )
 
 
 def _zigzag_ring_flash_fixedlen_kvpacked_attn(
     q: torch.Tensor, kv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False
 ):
-    return zigzag_ring_flash_attn_kvpacked_func(q, kv, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG)
+    return zigzag_ring_flash_attn_kvpacked_func(
+        q, kv, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
+    )
 
 
 def _zigzag_ring_flash_varlen_qkvsplited_attn(
@@ -362,12 +364,14 @@ def _zigzag_ring_flash_varlen_qkvsplited_attn(
     assert cu_seqlens_q.equal(cu_seqlens_k), "ring_flash_attn_varlen_kvpacked_func only support same q/k cu_seqlens"
 
     return zigzag_ring_flash_attn_varlen_func(
-        q, k, v, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
+        q, k, v, cu_seqlens_q, max_seqlen_q, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
     )
 
 
 def _zigzag_ring_flash_fixedlen_qkvsplited_attn(q, k, v, dropout_p=0.0, softmax_scale=None, causal=False):
-    return zigzag_ring_flash_attn_func(q, k, v, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG)
+    return zigzag_ring_flash_attn_func(
+        q, k, v, dropout_p, softmax_scale, causal, group=gpc.get_group(ParallelMode.CONTEXT)
+    )
 
 
 ###############################
@@ -383,9 +387,7 @@ def _fullkv_zigzag_ring_flash_varlen_qkvpacked_attn(*args, **kwargs):
 def _fullkv_zigzag_ring_flash_fixedlen_qkvpacked_attn(
     qkv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False
 ):
-    return zigzag_ring_flash_attn_qkvpacked_func_with_full_kv(
-        qkv, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
-    )
+    pass
 
 
 def _fullkv_zigzag_ring_flash_varlen_kvpacked_attn(*args, **kwargs):
@@ -396,9 +398,7 @@ def _fullkv_zigzag_ring_flash_varlen_kvpacked_attn(*args, **kwargs):
 def _fullkv_zigzag_ring_flash_fixedlen_kvpacked_attn(
     q: torch.Tensor, kv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False
 ):
-    return zigzag_ring_flash_attn_kvpacked_func_with_full_kv(
-        q, kv, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
-    )
+    pass
 
 
 def _fullkv_zigzag_ring_flash_varlen_qkvsplited_attn(
@@ -410,9 +410,7 @@ def _fullkv_zigzag_ring_flash_varlen_qkvsplited_attn(
 
 
 def _fullkv_zigzag_ring_flash_fixedlen_qkvsplited_attn(q, k, v, dropout_p=0.0, softmax_scale=None, causal=False):
-    return zigzag_ring_flash_attn_func_with_full_kv(
-        q, k, v, dropout_p, softmax_scale, causal, group=PROCESS_GROUP.RING_PG
-    )
+    pass
 
 
 def _sliding_window_zigzag_ring_flash_fixedlen_kvpacked_attn(
@@ -429,11 +427,11 @@ def _sliding_window_zigzag_ring_flash_fixedlen_kvpacked_attn(
         dropout_p,
         softmax_scale,
         causal,
-        ring_group=PROCESS_GROUP.RING_PG,
-        p2p_group=PROCESS_GROUP.P2P_PG,
-        all_gather_group=PROCESS_GROUP.ALLGATHER_PG,
-        dkv_p2p_group=PROCESS_GROUP.DKV_P2P_PG,
-        dkv_all_gather_group=PROCESS_GROUP.DKV_ALLGATHER_PG,
+        ring_group=gpc.get_group(ParallelMode.CONTEXT),
+        p2p_group=gpc.get_group(ParallelMode.INTER_WINDOW),
+        all_gather_group=gpc.get_group(ParallelMode.INTRA_WINDOW),
+        dkv_p2p_group=gpc.get_group(ParallelMode.DKV_INTER_WINDOW),
+        dkv_all_gather_group=gpc.get_group(ParallelMode.DKV_INTRA_WINDOW),
         layer_idx=layer_idx,
     )
 
@@ -691,30 +689,6 @@ _attn_ops_bindings = {
         AttnOpType.FixedLenKVPacked: _flash_fixedlen_kvpacked_attn,
         AttnOpType.FixedLenQKVSplited: _flash_fixedlen_qkvsplited_attn,
     },
-    AttnType.RingFlash: {
-        AttnOpType.VarLenQKVPacked: _ring_flash_varlen_qkvpacked_attn,
-        AttnOpType.VarLenKVPacked: _ring_flash_varlen_kvpacked_attn,
-        AttnOpType.VarLenQKVSplited: _ring_flash_varlen_qkvsplited_attn,
-        AttnOpType.FixedLenQKVPacked: _ring_flash_fixedlen_qkvpacked_attn,
-        AttnOpType.FixedLenKVPacked: _ring_flash_fixedlen_kvpacked_attn,
-        AttnOpType.FixedLenQKVSplited: _ring_flash_fixedlen_qkvsplited_attn,
-    },
-    AttnType.ZigZagFlash: {
-        AttnOpType.VarLenQKVPacked: _zigzag_ring_flash_varlen_qkvpacked_attn,
-        AttnOpType.VarLenKVPacked: _zigzag_ring_flash_varlen_kvpacked_attn,
-        AttnOpType.VarLenQKVSplited: _zigzag_ring_flash_varlen_qkvsplited_attn,
-        AttnOpType.FixedLenQKVPacked: _zigzag_ring_flash_fixedlen_qkvpacked_attn,
-        AttnOpType.FixedLenKVPacked: _zigzag_ring_flash_fixedlen_kvpacked_attn,
-        AttnOpType.FixedLenQKVSplited: _zigzag_ring_flash_fixedlen_qkvsplited_attn,
-    },
-    AttnType.FullKVZigZagFlash: {
-        AttnOpType.VarLenQKVPacked: _fullkv_zigzag_ring_flash_varlen_qkvpacked_attn,
-        AttnOpType.VarLenKVPacked: _fullkv_zigzag_ring_flash_varlen_kvpacked_attn,
-        AttnOpType.VarLenQKVSplited: _fullkv_zigzag_ring_flash_varlen_qkvsplited_attn,
-        AttnOpType.FixedLenQKVPacked: _fullkv_zigzag_ring_flash_fixedlen_qkvpacked_attn,
-        AttnOpType.FixedLenKVPacked: _fullkv_zigzag_ring_flash_fixedlen_kvpacked_attn,
-        AttnOpType.FixedLenQKVSplited: _fullkv_zigzag_ring_flash_fixedlen_qkvsplited_attn,
-    },
     AttnType.SlidingWindowZigZagFlash: {
         AttnOpType.VarLenQKVPacked: _fullkv_zigzag_ring_flash_varlen_qkvpacked_attn,
         AttnOpType.VarLenKVPacked: _fullkv_zigzag_ring_flash_varlen_kvpacked_attn,
@@ -745,28 +719,20 @@ _attn_ops_bindings = {
 def _select_attn_op(op_type: AttnOpType) -> Tuple[AttnType, Callable]:
     attn_type = None
 
-    ring_attn_conf = gpc.config.get("use_ring_attn", "none")
+    enable_2D_sp = gpc.config.parallel.sequence_2D.enable
 
     if gpc.config.model.get("use_flash_attn", False):
         if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
-            if ring_attn_conf == "none":
-                attn_type = AttnType.Flash
-            elif ring_attn_conf == "basic":
-                attn_type = AttnType.RingFlash
-            elif ring_attn_conf == "zigzag":
-                attn_type = AttnType.ZigZagFlash
-            elif ring_attn_conf == "full_kv_zigzag":
-                attn_type = AttnType.FullKVZigZagFlash
-            elif ring_attn_conf == "sliding_window_zigzag":
+            if enable_2D_sp is True:
                 attn_type = AttnType.SlidingWindowZigZagFlash
             else:
-                raise NotImplementedError(f"Unsupported ring flash attention type: {ring_attn_conf}")
+                attn_type = AttnType.Flash
         elif device_backend == AcceleratorType.NPU and is_torch_npu:
-            assert ring_attn_conf == "none", "ring flash attention for npu is not yet implemented"
+            assert enable_2D_sp is False, "2D attention for npu is not yet implemented"
 
             attn_type = AttnType.NPUFlash
         elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
-            assert ring_attn_conf == "none", "ring flash attention for deeplink is not yet implemented"
+            assert enable_2D_sp is False, "2D attention for deeplink is not yet implemented"
 
             attn_type = AttnType.DeepLinkFlash
         else:

@@ -14,7 +14,6 @@ from torch import nn
 
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.context.globals import PROCESS_GROUP
 from internlm.core.naive_amp import unwrap_naive_amp
 from internlm.core.parallel.comm.utils import (
     DUMMY_HANDLE_CONST,
@@ -692,7 +691,7 @@ class _SeqAllToAll(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *grad_output: torch.Tensor) -> Tuple[None, torch.Tensor, None, None]:
-        import time
+        # import time
 
         # torch.distributed.barrier()
         # torch.cuda.synchronize()
@@ -808,12 +807,11 @@ class DistributedAttention(nn.Module):
         # q shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
 
-        if gpc.config.uly_sp != dist.get_world_size(self.spg):
-            uly_pg = PROCESS_GROUP.ULYSSES_PG
-            self.spg = uly_pg
+        if gpc.config.parallel.sequence_2D.enable is True:
+            self.spg = gpc.get_group(ParallelMode.HEAD)
             self.sp_size = dist.get_world_size(self.spg)
 
-        import time
+        # import time
 
         # kv shape: [1, packlen, 2, n_head, head_dim] or [batch, seqlen, 2, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
