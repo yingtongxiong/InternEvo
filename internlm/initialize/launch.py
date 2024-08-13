@@ -388,7 +388,7 @@ def args_sanity_check():
         assert (
             gpc.config.data.use_packed_dataset is False
         ), "only unpacked data is supported when tensor parallel mode is isp and accelerator type is NPU or DIPU"
- 
+
     # adapt to old version's sequence parallel config
     if gpc.config.parallel["tensor"].get("mode", None) in ["msp", "fsp", "isp"]:
         gpc.config.parallel.sequence_parallel = True
