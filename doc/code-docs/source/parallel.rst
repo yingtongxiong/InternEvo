@@ -241,14 +241,15 @@ InternEvo针对2D-Attention做了一些更进一步的优化：
 
   Double-Ring-Attention
 
+- 3. 由于2D-Attention中同时涉及到 ``head parallel`` 和 ``context parallel`` ，因此InternEvo提供了可配置选项，用于控制 ``head parallel`` 和 ``context parallel`` 创建通信组的优先级
+- 4. 为了充分利用网卡资源，需要特别注意创建 ``context parallel`` 通信组。当 ``head parallel`` 优先创建通信组， ``context parallel`` 的GPU天然就是interleaved，这时天然能够利用网卡资源；当 ``context parallel`` 优先创建通信组时，这些 ``context parallel`` 被分配到的GPU往往是连续的，为了提高通信效率，InternEvo提供了interleaved配置选项，可以在 ``window size > 1`` 的情况，重排 ``context parallel`` 的GPU。
+
+下图展示了一个Double-Ring-Attention充分利用网卡资源的示例
 .. figure:: ../../imgs/nic.PNG
   :scale: 80%
   :class: with-border
 
   Communication in Double-Ring-Attention 
-
-- 3. 由于2D-Attention中同时涉及到 ``head parallel`` 和 ``context parallel`` ，因此InternEvo提供了可配置选项，用于控制 ``head parallel`` 和 ``context parallel`` 创建通信组的优先级
-- 4. 为了充分利用网卡资源，需要特别注意创建 ``context parallel`` 通信组。当 ``head parallel`` 优先创建通信组， ``context parallel`` 的GPU天然就是interleaved，这时天然能够利用网卡资源；当 ``context parallel`` 优先创建通信组时，这些 ``context parallel`` 被分配到的GPU往往是连续的，为了提高通信效率，InternEvo提供了interleaved配置选项，可以在 ``window size > 1`` 的情况，重排 ``context parallel`` 的GPU。
 
 InternEvo在parallel config里面添加了sequence_2D用于配置2D-Attention。
 
