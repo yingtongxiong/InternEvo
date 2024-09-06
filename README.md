@@ -190,7 +190,7 @@ Please refer to the [System Architecture document](./doc/en/structure.md) for ar
         <b>Parallel Computing Loss</b>
       </td>
       <td>
-        <b><a href="doc/parallel_output.md">link</a></b>
+        <b><a href="doc/en/parallel_output.md">link</a></b>
       </td>
     </tr>
   </tbody>
