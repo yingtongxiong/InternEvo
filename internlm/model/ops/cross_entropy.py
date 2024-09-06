@@ -16,15 +16,6 @@ from internlm.core.context import global_context as gpc
 from internlm.utils.logger import get_logger
 from internlm.utils.parallel import is_using_isp
 
-try:
-    from flash_attn.losses.cross_entropy import (
-        CrossEntropyLoss as FlashCrossEntropyLoss,
-    )
-
-    flash_cross_entropy_impl = True
-except (ModuleNotFoundError, ImportError):
-    flash_cross_entropy_impl = False
-
 logger = get_logger(__file__)
 internlm_accelerator = get_accelerator()
 
@@ -153,6 +144,7 @@ class VocabSequenceParallelCrossEntropyLoss(nn.Module):
 
         return _loss_list.view(-1)
 
+
 class _VocabParallelCrossEntropy(torch.autograd.Function):
     """Adapt from: https://github.com/NVIDIA/apex/blob/master/apex/transformer/tensor_parallel/cross_entropy.py
     Supports vocab parallel loss calculation, but does not support inplace backward.
@@ -277,12 +269,15 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
 
         return grad_input, None, None, None
 
+
 class CrossEntropyApexVocabParallel(nn.Module):
     """Adapt from: https://github.com/NVIDIA/apex/blob/master/apex/transformer/tensor_parallel/cross_entropy.py
     Supports vocab parallel loss calculation, but does not support inplace backward.
     """
 
-    def __init__(self, ignore_index=-100, reduction="mean", label_smoothing=0.0, process_group=None, inplace_backward=False):
+    def __init__(
+        self, ignore_index=-100, reduction="mean", label_smoothing=0.0, process_group=None, inplace_backward=False
+    ):
         super().__init__()
         if reduction not in ["mean", "none"]:
             raise NotImplementedError("Only support reduction = 'mean' or 'none'")
@@ -301,6 +296,39 @@ class CrossEntropyApexVocabParallel(nn.Module):
             return loss.sum() / (target != self.ignore_index).sum()
         else:
             return loss
+
+
+def flash_loss(
+    ignore_index=-100,
+    reduction="mean",
+    label_smoothing=0.0,
+    process_group=None,
+    inplace_backward=False,  # pylint:disable=W0613
+):
+    try:
+        from flash_attn.losses.cross_entropy import (
+            CrossEntropyLoss as FlashCrossEntropyLoss,
+        )
+
+        flash_cross_entropy_impl = True
+    except (ModuleNotFoundError, ImportError):
+        flash_cross_entropy_impl = False
+
+    assert (
+        gpc.config.model.get("use_flash_attn", False) and flash_cross_entropy_impl
+    ), "Only flash cross entropy support parallel_output"
+
+    assert (
+        internlm_accelerator.get_accelerator_backend() is AcceleratorType.GPU
+    ), "flash cross entropy only support gpu backend"
+
+    return FlashCrossEntropyLoss(
+        ignore_index=ignore_index,
+        reduction=reduction,
+        label_smoothing=label_smoothing,
+        process_group=process_group,
+    )
+
 
 # TODO: ops是否需要实现更加统一的形式
 def new_cross_entropy(
@@ -321,19 +349,13 @@ def new_cross_entropy(
         )
 
     if parallel_output:
-        assert (
-            gpc.config.model.get("use_flash_attn", False) and flash_cross_entropy_impl
-        ), "Only flash cross entropy support parallel_output"
-        assert (
-            internlm_accelerator.get_accelerator_backend() is AcceleratorType.GPU
-        ), "flash cross entropy only support gpu backend"
-
-        # return FlashCrossEntropyLoss(
+        # return flash_loss(
         #     ignore_index=ignore_index,
         #     reduction=reduction,
         #     label_smoothing=label_smoothing,
         #     process_group=gpc.get_group(ParallelMode.TENSOR),
         # )
+
         return CrossEntropyApexVocabParallel(
             ignore_index=ignore_index,
             reduction=reduction,
