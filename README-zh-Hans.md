@@ -175,7 +175,7 @@ $ torchrun --nnodes=1 --nproc_per_node=8 train.py --config ./configs/7B_sft.py -
 
 <div align="center">
 </div>
-<table align="center">
+<table>
   <tbody>
     <tr align="center" valign="bottom">
       <td>
