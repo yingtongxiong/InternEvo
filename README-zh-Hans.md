@@ -171,6 +171,31 @@ $ torchrun --nnodes=1 --nproc_per_node=8 train.py --config ./configs/7B_sft.py -
   </tbody>
 </table>
 
+## 常见tips
+
+<div align="center">
+</div>
+<table align="center">
+  <tbody>
+    <tr align="center" valign="bottom">
+      <td>
+        <b>现象</b>
+      </td>
+      <td>
+        <b>介绍</b>
+      </td>
+    </tr>
+    <tr valign="bottom">
+      <td>
+        <b>在Vocab维度并行计算loss</b>
+      </td>
+      <td>
+        <b><a href="doc/parallel_output.md">说明</a></b>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
 ## 贡献
 
 我们感谢所有的贡献者为改进和提升 InternEvo 所作出的努力。非常欢迎社区用户能参与进项目中来。请参考贡献指南来了解参与项目贡献的相关指引。
