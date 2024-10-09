@@ -768,8 +768,8 @@ msgid ""
 "parallel`` 之间进行切换， 因此 ``sp size`` 自然受到 ``head number`` 的限制，无法进行扩展；而Ring-"
 "Attention由于在attention计算过程中需要进行P2P通信，可能会遇到通信低效的问题。"
 msgstr ""
-"2D-Attention is the sequence parallelism within InternEvo, integrating both the Ring-Attention and ISP."
-"The sequence parallel size in ISP is constrained by the head number, limiting the scalability."
+"2D-Attention is the sequence parallelism within InternEvo, integrating both the Ring-Attention and ISP. "
+"The sequence parallel size in ISP is constrained by the head number, limiting the scalability. "
 "Meanwhile, the Ring-Attention may lead to suboptimal performance due to the inefficient P2P communication."
 
 #: ../../source/parallel.rst:219
@@ -777,7 +777,7 @@ msgid ""
 "2D-Attention将ISP和Ring-Attention相结合，组成一个混合序列并行，能够解除 ``sp size`` 小于等于 "
 "``head number`` 的限制，同时避免P2P低效带宽利用。"
 msgstr ""
-"2D-Attention, by integrating ISP and Ring-Attention, not only overcomes the limitation that the sequence parallel size"
+"2D-Attention, by integrating ISP and Ring-Attention, not only overcomes the limitation that the sequence parallel size "
 "must not exceed the head number, but also enhances the P2P communication efficiency."
 
 #: ../../source/parallel.rst:221
@@ -786,7 +786,7 @@ msgid ""
 " parallel size`` ， ``cp size`` 为 ``context parallel size`` （Ring-"
 "Attention）。 下图展示了 ``hp=2`` ， ``cp=4`` 的例子。"
 msgstr ""
-"In 2D-Attention, sp size = hp size * cp size, where hp size represents the head parallel size,"
+"In 2D-Attention, sp size = hp size * cp size, where hp size represents the head parallel size, "
 "cp size denotes the context parallel size. The following figure shows an example where hp=2, cp=4."
 
 #: ../../source/parallel.rst:230
@@ -795,9 +795,9 @@ msgid ""
 "GPU4~7拥有两个head的后4个token。在第一个All2All之后，GPU0~3拥有第一个head的所有token，且将第一个head的所有token切成4份"
 "，做Ring-Attention，GPU4~7同理；在第2个All2All之后，所有GPU又回到初始状态。"
 msgstr ""
-"In the above figure, different color represents different head. Before conducting the first All2All, GPU 0~3 process the first 4 tokens for two heads,"
+"In the above figure, different color represents different head. Before conducting the first All2All, GPU 0~3 process the first 4 tokens for two heads, "
 "while GPU 4~7 hold the last 4 tokens of the same two heads. After the first All2All, GPU 0~3 receive all tokens for the first head"
-"and divide these tokens into 4 segments to perform Ring-Attention. GPU 4~7 follow a similar process."
+"and divide these tokens into 4 segments to perform Ring-Attention. GPU 4~7 follow a similar process. "
 "All GPUs return the initial states after the second All2All."
 
 #: ../../source/parallel.rst:233
@@ -811,8 +811,8 @@ msgid ""
 "<https://github.com/zhuzilin/ring-flash-attention/issues/2>`_ ，在2D-"
 "Attention中的 ``context parallel`` 使用了zigzag模式"
 msgstr ""
-"In Ring-Attention, the computation load for each GPU is unevenly distributed due to the causal model."
-"InternEvo addresses this imbalance by implementing zigzag in context parallel as described in `zigzag <https://github.com/zhuzilin/ring-flash-attention/issues/2>`"
+"In Ring-Attention, the computation load for each GPU is unevenly distributed due to the causal model. "
+"InternEvo addresses this imbalance by implementing zigzag in context parallel as described in `zigzag <https://github.com/zhuzilin/ring-flash-attention/issues/2>`_"
 
 #: ../../source/parallel.rst:236
 msgid ""
@@ -822,8 +822,8 @@ msgid ""
 "Attention，进行节点内P2P通信。GPU 0和4做Outer Ring "
 "Attention，进行节点间P2P通信，网卡利用示意图如下图所示。"
 msgstr ""
-"2D-Attention introduces the window size concept in context parallel to optimize the use of NIC resources, known as Double-Ring Attention."
-"The following diagram illustrates an example where cp=8, window_size=4. GPU 0~3 and 4~7 perform the inner Ring Attention respectively, which involves intra-node communication."
+"2D-Attention introduces the window size concept in context parallel to optimize the use of NIC resources, known as Double-Ring Attention. "
+"The following diagram illustrates an example where cp=8, window_size=4. GPU 0~3 and 4~7 perform the inner Ring Attention respectively, which involves intra-node communication. "
 "GPU 0 and GPU 4 carry out the outer Ring Attention, which involves inter-node communication."
 
 #: ../../source/parallel.rst:242
@@ -847,10 +847,10 @@ msgid ""
 "被分配到的GPU往往是连续的，为了提高通信效率，InternEvo提供了interleaved配置选项，可以在 ``window size > "
 "1`` 的情况，重排 ``context parallel`` 的GPU。"
 msgstr ""
-"It should be noted that the establishment of process group for context parallel to take advantage of NIC resources."
-"When head parallel is given high priority, the GPUs assigned to context parallel are natively interleaved, which is beneficial for utilizing the NIC."
-"Conversely, when context parallel is prioritized, the arrangement of GPUs for context parallel tends to be sequential."
-"To improve the communication efficiency, InternEvo provides an interleaved configuration."
+"It should be noted that the establishment of process group for context parallel to take advantage of NIC resources. "
+"When head parallel is given high priority, the GPUs assigned to context parallel are natively interleaved, which is beneficial for utilizing the NIC. "
+"Conversely, when context parallel is prioritized, the arrangement of GPUs for context parallel tends to be sequential. "
+"To improve the communication efficiency, InternEvo provides an interleaved configuration. "
 "This allows for the reorganization of GPUs involved in context parallel when window size > 1."
 
 #: ../../source/parallel.rst:247
@@ -867,7 +867,7 @@ msgstr "InternEvo introduces the sequence_2D in parallel configuration to set up
 
 #: ../../source/parallel.rst:274
 msgid "``sequence_2D.enable`` 字段表示是否启用2D-Attention"
-msgstr "sequence_2D.enable indicates whether to employ 2D-Attention"
+msgstr "``sequence_2D.enable`` indicates whether to employ 2D-Attention"
 
 #: ../../source/parallel.rst:276
 msgid "``sequence_2D.head_size`` 字段表示head parallel size"
