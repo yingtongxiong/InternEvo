@@ -906,7 +906,7 @@ msgid ""
 "<https://arxiv.org/pdf/2406.18485>`_"
 msgstr ""
 "For more design concepts and performance evaluations of 2D-Attention, please refer to the paper"
-"`LoongTrain: Efficient Training of Long-Sequence LLMs with Head-Context Parallelism <https://arxiv.org/pdf/2406.18485>`_"
+" `LoongTrain: Efficient Training of Long-Sequence LLMs with Head-Context Parallelism <https://arxiv.org/pdf/2406.18485>`_"
 
 #~ msgid "A tuple of (output, label, loss), loss and label could be None."
 #~ msgstr ""
