@@ -769,8 +769,8 @@ msgid ""
 "Attention由于在attention计算过程中需要进行P2P通信，可能会遇到通信低效的问题。"
 msgstr ""
 "2D-Attention is the sequence parallelism within InternEvo, integrating both the Ring-Attention and ISP. "
-"The sequence parallel size in ISP is constrained by the head number, limiting the scalability. "
-"Meanwhile, the Ring-Attention may lead to suboptimal performance due to the inefficient P2P communication."
+" The sequence parallel size in ISP is constrained by the head number, limiting the scalability. "
+" Meanwhile, the Ring-Attention may lead to suboptimal performance due to the inefficient P2P communication."
 
 #: ../../source/parallel.rst:219
 msgid ""
