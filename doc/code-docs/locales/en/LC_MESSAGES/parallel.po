@@ -796,7 +796,7 @@ msgid ""
 "，做Ring-Attention，GPU4~7同理；在第2个All2All之后，所有GPU又回到初始状态。"
 msgstr ""
 "In the above figure, different color represents different head. Before conducting the first All2All, GPU 0~3 process the first 4 tokens for two heads, "
-"while GPU 4~7 hold the last 4 tokens of the same two heads. After the first All2All, GPU 0~3 receive all tokens for the first head"
+"while GPU 4~7 hold the last 4 tokens of the same two heads. After the first All2All, GPU 0~3 receive all tokens for the first head "
 "and divide these tokens into 4 segments to perform Ring-Attention. GPU 4~7 follow a similar process. "
 "All GPUs return the initial states after the second All2All."
 
