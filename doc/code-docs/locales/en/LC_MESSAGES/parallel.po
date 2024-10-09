@@ -786,8 +786,8 @@ msgid ""
 " parallel size`` ， ``cp size`` 为 ``context parallel size`` （Ring-"
 "Attention）。 下图展示了 ``hp=2`` ， ``cp=4`` 的例子。"
 msgstr ""
-"In 2D-Attention, sp size = hp size * cp size, where hp size represents the head parallel size, "
-"cp size denotes the context parallel size. The following figure shows an example where hp=2, cp=4."
+"In 2D-Attention, ``sp size = hp size * cp size``, where ``hp size`` represents the head parallel size, "
+"``cp size`` denotes the context parallel size. The following figure shows an example where hp=2, cp=4."
 
 #: ../../source/parallel.rst:230
 msgid ""
@@ -823,7 +823,7 @@ msgid ""
 "Attention，进行节点间P2P通信，网卡利用示意图如下图所示。"
 msgstr ""
 "2D-Attention introduces the window size concept in context parallel to optimize the use of NIC resources, known as Double-Ring Attention. "
-"The following diagram illustrates an example where cp=8, window_size=4. GPU 0~3 and 4~7 perform the inner Ring Attention respectively, which involves intra-node communication. "
+"The following diagram illustrates an example where ``cp=8``, ``window_size=4``. GPU 0~3 and 4~7 perform the inner Ring Attention respectively, which involves intra-node communication. "
 "GPU 0 and GPU 4 carry out the outer Ring Attention, which involves inter-node communication."
 
 #: ../../source/parallel.rst:242
@@ -851,7 +851,7 @@ msgstr ""
 "When head parallel is given high priority, the GPUs assigned to context parallel are natively interleaved, which is beneficial for utilizing the NIC. "
 "Conversely, when context parallel is prioritized, the arrangement of GPUs for context parallel tends to be sequential. "
 "To improve the communication efficiency, InternEvo provides an interleaved configuration. "
-"This allows for the reorganization of GPUs involved in context parallel when window size > 1."
+"This allows for the reorganization of GPUs involved in context parallel when ``window size > 1``."
 
 #: ../../source/parallel.rst:247
 msgid "下图展示了一个Double-Ring-Attention充分利用网卡资源的示例。"
@@ -871,22 +871,22 @@ msgstr "``sequence_2D.enable`` indicates whether to employ 2D-Attention"
 
 #: ../../source/parallel.rst:276
 msgid "``sequence_2D.head_size`` 字段表示head parallel size"
-msgstr "sequence_2D.head_size denotes the head parallel size"
+msgstr "``sequence_2D.head_size`` denotes the head parallel size"
 
 #: ../../source/parallel.rst:278
 msgid "``sequence_2D.context_size`` 字段表示context parallel size"
-msgstr "sequence_2D.context_size represents the context parallel size"
+msgstr "``sequence_2D.context_size`` represents the context parallel size"
 
 #: ../../source/parallel.rst:280
 msgid "``sequence_2D.window_size`` 字段表示Double-Ring Attention中的window_size"
-msgstr "sequence_2D.window_size indicates the windo_size in Double-Ring Attention"
+msgstr "``sequence_2D.window_size`` indicates the windo_size in Double-Ring Attention"
 
 #: ../../source/parallel.rst:282
 msgid ""
 "``sequence_2D.device_placement_strategy.head_first`` 字段表示是否优先分配head "
 "parallel通信组，若为False，则为context-first"
 msgstr ""
-"sequence_2D.device_placement_strategy.head_first determines whether to prioritize the establishment of the head parallel process group."
+"``sequence_2D.device_placement_strategy.head_first`` determines whether to prioritize the establishment of the head parallel process group."
 "If set to False, the context parallel is given priority instead."
 
 #: ../../source/parallel.rst:284
@@ -896,8 +896,8 @@ msgid ""
 "``sequence_2D.device_placement_strategy.head_first=False`` 和 "
 "``sequence_2D.window_size>1`` 时，推荐设置为 ``True``"
 msgstr ""
-"sequence_2D.device_placement_strategy.interleavd determines whether to rearrange the GPUs for context parallel."
-"It is recommend to set it to True when sequence_2D.device_placement_strategy.head_first=False and sequence_2D.window_size>1."
+"``sequence_2D.device_placement_strategy.interleavd`` determines whether to rearrange the GPUs for context parallel."
+"It is recommend to set it to True when ``sequence_2D.device_placement_strategy.head_first=False`` and ``sequence_2D.window_size>1``."
 
 #: ../../source/parallel.rst:286
 msgid ""
