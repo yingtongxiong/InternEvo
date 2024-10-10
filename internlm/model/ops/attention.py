@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Callable, Tuple
 
 import torch
+import torch.distributed as dist
 from einops import rearrange, repeat
 from torch import nn
 
@@ -1210,3 +1211,42 @@ def isp_flash_attn_func(
         causal=causal,
         return_attn_probs=return_attn_probs,
     )
+
+
+class GroupQueryAttention(nn.Module):
+    """GroupQueryAttention is used for the following case:
+        when setting tp_size > num_kv_attention_heads, it copies the kv heads to ensure that it is separable.
+
+    It performs a gradient averaging on the copied kv head so that the copied kv head is always synchronized.
+    It's mostly used for long-context training with ISP.
+    """
+
+    def __init__(self, inner_atten, process_group=None) -> None:
+        super().__init__()
+        self.inner_atten = inner_atten
+        self.proccess_group = process_group
+        if self.proccess_group:
+            self.register_full_backward_hook(self._backward_hook)
+
+    def forward(self, q=None, kv=None, *args, **kwargs):  # pylint: disable=keyword-arg-before-vararg
+        if q is None or kv is None:
+            assert "k" in kwargs and "v" in kwargs, "k and v should be passed as args, or at least in kwargs"
+            q, kv = kwargs.pop("q"), kwargs.pop("kv")
+
+            if self.proccess_group and gpc.is_rank_for_log():
+                raise RuntimeError(
+                    "The parameters `q` and `kv` are only allowed to "
+                    "be passed in as positional arguments, not keyword arguments."
+                )
+        return self.inner_atten(q, kv, *args, **kwargs)
+
+    def _backward_hook(self, module, grad_input, grad_output):  # pylint: disable=W0613
+        dq, dkv = grad_input
+        if internlm_accelerator.get_accelerator_backend() in (AcceleratorType.NPU, AcceleratorType.DIPU):
+            dist.all_reduce(tensor=dkv, group=self.proccess_group, op=dist.ReduceOp.SUM, async_op=False)
+            dkv.div_(len(dist.get_process_group_ranks(self.proccess_group)))
+        else:
+            dist.all_reduce(tensor=dkv, group=self.proccess_group, op=dist.ReduceOp.AVG, async_op=False)
+
+        return dq, dkv
+

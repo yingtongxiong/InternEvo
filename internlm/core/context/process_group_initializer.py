@@ -1124,11 +1124,10 @@ class Initializer_GQA(ProcessGroupInitializer):
     """
 
     def __init__(self, *args, **kwargs):
+        self.num_attention_heads = kwargs.pop("num_attention_heads")
+        self.num_kv_attention_heads = kwargs.pop("num_kv_attention_heads")
         super().__init__(*args, **kwargs)
-        # TODO: should adapt to general case
-        self.num_kv_attention_heads = 8
-        self.NUM_ATTENTION_HEAD = 32
-        self.kv_head_repeats_num = self.NUM_ATTENTION_HEAD // self.num_kv_attention_heads
+        self.kv_head_repeats_num = self.tensor_parallel_size // self.num_kv_attention_heads
         self.num_kv_group_per_tp = self.num_kv_attention_heads
         self.num_kv_groups = self.num_kv_group_per_tp * self.data_parallel_size
 
@@ -1159,7 +1158,6 @@ class Initializer_GQA(ProcessGroupInitializer):
         group_world_size = None
         mode = ParallelMode.GQA
 
-        # TODO: consider PP
         for i in range(self.data_parallel_size):
             for j in range(self.num_kv_group_per_tp):
                 ranks = [

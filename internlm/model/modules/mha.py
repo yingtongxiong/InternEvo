@@ -11,11 +11,13 @@ from torch import nn
 from torch.nn import functional as F
 
 from internlm.core.context import global_context as gpc
+from internlm.core.context import ParallelMode
 from internlm.model.modules.embedding import new_rotary_embedding
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.utils import update_kv_cache
-from internlm.model.ops.attention import CrossAttention, SelfAttention
+from internlm.model.ops.attention import CrossAttention, SelfAttention, GroupQueryAttention
 from internlm.utils.logger import get_logger
+from internlm.utils.parallel import is_using_isp
 
 logger = get_logger(__file__)
 
@@ -434,8 +436,15 @@ class GQA(nn.Module):
             self.head_dim = self.embed_dim // num_heads
             q_dim = embed_dim
         self.num_kv_heads = num_kv_heads
-        self.q_per_kv = num_heads // num_kv_heads
-        self.kv_dim = self.head_dim * num_kv_heads
+
+        if not is_using_isp():
+            self.expand_num_kv_heads = max(num_kv_heads, gpc.get_world_size(ParallelMode.TENSOR))
+            self.need_dkv_reduction = num_kv_heads < gpc.get_world_size(ParallelMode.TENSOR)
+        else:
+            self.expand_num_kv_heads = num_kv_heads
+        
+        self.q_per_kv = num_heads // self.expand_num_kv_heads
+        self.kv_dim = self.head_dim * self.expand_num_kv_heads
         self.enable_qkv_fusion = enable_qkv_fusion
 
         self.use_dynamic_ntk_rope = use_dynamic_ntk_rope
@@ -477,6 +486,11 @@ class GQA(nn.Module):
         self.inner_cross_attn = CrossAttention(
             causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout, layer_idx=layer_idx
         )
+        
+        if not is_using_isp():
+            self.inner_attn = GroupQueryAttention(
+                self.inner_attn, process_group=gpc.get_group(ParallelMode.GQA) if self.need_dkv_reduction else None
+            )
 
         self.wo = new_linear("wo", q_dim, embed_dim, bias, **factory_kwargs)
 

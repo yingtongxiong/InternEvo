@@ -497,6 +497,7 @@ class ParallelContext(metaclass=SingletonMeta):
 
         # set parallel size as attributes for global context
         parallel_config = self.config.get("parallel", None)
+        model_config = self.config["model"]
         if parallel_config is not None:
             # set default value for parallel size
             if "zero1" not in parallel_config:
@@ -641,8 +642,17 @@ class ParallelContext(metaclass=SingletonMeta):
 
         # run initialization of different process groups
         initializers = []
-        if "gqa" in parallel_config and parallel_config["gqa"] is True:
-            initializers.append(pgroup_initializer.Initializer_GQA(*initializer_args))
+        if "num_attention_heads" in model_config:
+            num_attention_heads = model_config["num_attention_heads"]
+            num_kv_attention_heads = model_config.get("num_kv_attention_heads", num_attention_heads)
+            if num_kv_attention_heads < self.tensor_parallel_size:
+                initializers.append(
+                    pgroup_initializer.Initializer_GQA(
+                        *initializer_args,
+                        num_attention_heads=num_attention_heads,
+                        num_kv_attention_heads=num_kv_attention_heads,
+                    )
+                )
         initializers.append(pgroup_initializer.Initializer_Weight(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Tensor(*initializer_args))
