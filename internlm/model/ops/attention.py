@@ -1249,4 +1249,3 @@ class GroupQueryAttention(nn.Module):
             dist.all_reduce(tensor=dkv, group=self.proccess_group, op=dist.ReduceOp.AVG, async_op=False)
 
         return dq, dkv
-
