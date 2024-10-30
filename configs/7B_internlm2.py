@@ -26,6 +26,14 @@ CHECKPOINT_EVERY = 50
 ckpt = dict(
     enable_save_ckpt=False,  # enable ckpt save.
     save_ckpt_folder=SAVE_CKPT_FOLDER,  # Path to save training ckpt.
+    # load_ckpt_folder= dict(path=MODEL_ONLY_FOLDER, content=["model"], ckpt_type="normal"),
+    load_ckpt_folder="local:llm_ckpts/",
+    # 'load_ckpt_info' setting guide:
+    # 1. the 'path' indicate ckpt path,
+    # 2. the 'content‘ means what states will be loaded, support: "model", "sampler", "optimizer", "scheduler", "all"
+    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "hf", or other custom-defined 
+    # load function such as "llama"
+    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     # 'auto_resume' is designed to automatically load the latest checkpoint from 'save_ckpt_folder' when encountering
     # training interruptions/hangs caused by hardware failures, using a scheduling system (such as k8s/slurm)
     # with an automatic restart mechanism upon training reboot.
@@ -67,6 +75,7 @@ data = dict(
     valid_folder=VALID_FOLDER,
     empty_cache_and_diag_interval=200,
     diag_outlier_ratio=1.1,
+    # use_packed_dataset=False,
 )
 
 grad_scaler = dict(
@@ -177,12 +186,33 @@ pipeline parallel (dict):
 weight parallel (dict):
     1. size: int, the size of weight parallel.
     2. overlap: bool, enable/disable all_gather/reduce_scatter communication overlap, defaults to False.
+sequence_2D (dict):
+    1. enable: bool, whether enable the 2D sequence parallel or not.
+    2. head_size: int, the parallel degree of head parallelism (DeepSpeed Ulysses). 
+                  head_size * context_size should be equal tensor size.
+    3. context_size: int, the parallel degree of context parallelism.
+                  head_size * context_size should be equal tensor size.
+    4. window_size: int, the sliding window size in context parallelism.
+    5. device_placement_strategy: dict,
+        head_first: bool, if `True`, ranks of the same head parallel group are 
+                              given high priority for colocation on the same node;
+                              if `False`, ranks of the same context parallel group are
+                              given high priority for colocation on the same node;
+        interleaved: bool, if `head_first` is `False` and `window_size` > 1, this config could 
+                           interleaved the ranks in the same window to make full use of NIC as much as possible.
 """
 parallel = dict(
     zero1=dict(size=-1),
-    tensor=dict(size=2, mode="isp"),
+    tensor=dict(size=2, mode="mtp"),
     pipeline=dict(size=1, interleaved_overlap=True),
     weight=dict(size=2, overlap=True),
+    sequence_2D=dict(
+        enable=False,
+        head_size=2,
+        context_size=4,
+        window_size=1,
+        device_placement_strategy=dict(head_first=True, interleaved=False),
+    ),
 )
 
 cudnn_deterministic = False

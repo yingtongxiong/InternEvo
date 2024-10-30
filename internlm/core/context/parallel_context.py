@@ -535,6 +535,7 @@ class ParallelContext(metaclass=SingletonMeta):
         # the user should not set the data parallel size manually
         # instead, it should be calculated based on other parallel config
         self.sequence_parallel_size = self.tensor_parallel_size
+        # dp size不需要手动指定，会根据其他并行size自动计算而得
         self.data_parallel_size = max(1, self.world_size // self.pipeline_parallel_size // self.sequence_parallel_size)
         self.weight_data_parallel_size = max(
             1, self.world_size // self.pipeline_parallel_size // self.weight_parallel_size
@@ -543,6 +544,8 @@ class ParallelContext(metaclass=SingletonMeta):
         # by default, expert_parallel_size equals to data_parallel_size, but if the number of experts is smaller
         # than data_parallel_size, set expert_parallel_size to be the number of experts to make sure each device
         # has one expert.
+        # 默认专家并行size=dp size，如果专家数目<dp size，则专家并行=专家数目
+        # expert_data_parallel_size = min(expert_num, data_parallel_size)
         if getattr(parallel_config.expert, "no_tp", False):
             self.expert_tensor_parallel_size = 1
         else:

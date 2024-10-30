@@ -3,7 +3,7 @@ JOB_NAME = "7b_train"
 DO_ALERT = False
 
 VOCAB_SIZE = 103168
-SEQ_LEN = 2048
+SEQ_LEN = 4096
 HIDDEN_SIZE = 4096
 NUM_ATTENTION_HEAD = 32
 NUM_KV_ATTENTION_HEAD = 8
@@ -54,9 +54,9 @@ VALID_FOLDER = None  # "/path/to/dataset"
 data = dict(
     seq_len=SEQ_LEN,
     # micro_num means the number of micro_batch contained in one gradient update
-    micro_num=4,
+    micro_num=1,
     # packed_length = micro_bsz * SEQ_LEN
-    micro_bsz=2,
+    micro_bsz=1,
     # defaults to the value of micro_num
     valid_micro_num=4,
     # defaults to 0, means disable evaluate
@@ -142,7 +142,7 @@ model = dict(
     embed_split_hidden=True,
     vocab_size=VOCAB_SIZE,
     embed_grad_scale=1,
-    parallel_output=True,
+    parallel_output=False,
     hidden_size=HIDDEN_SIZE,
     num_layers=NUM_LAYER,
     # no_bias=True,
@@ -203,9 +203,9 @@ sequence_2D (dict):
 """
 parallel = dict(
     zero1=dict(size=-1),
-    tensor=dict(size=2, mode="isp"),
+    tensor=dict(size=1, mode="mtp"),
     pipeline=dict(size=1, interleaved_overlap=True),
-    weight=dict(size=4, overlap=True),
+    weight=dict(size=1, overlap=True),
     sequence_2D=dict(
         enable=False,
         head_size=2,
