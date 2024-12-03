@@ -112,14 +112,12 @@ class FeedForward(nn.Module):
             self.activation_fn = Gelu
 
     def forward(self, x):
-
         if self.mlp_layer_fusion:
             fused_out = self.fused_w1_w3(x)
             w1_o, w3_o = torch.split(fused_out, fused_out.shape[-1] // 2, dim=-1)
-            return self.w2(self.activation_fn(w1_o, w3_o))
-
-        w1_o = self.w1(x)
-        w3_o = self.w3(x)
+        else:
+            w1_o = self.w1(x)
+            w3_o = self.w3(x)
         return self.w2(self.activation_fn(w1_o, w3_o))
 
 
