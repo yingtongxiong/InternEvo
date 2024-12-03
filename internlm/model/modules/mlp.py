@@ -105,7 +105,7 @@ class FeedForward(nn.Module):
             self.w3 = new_linear(
                 "w3", in_features, hidden_features, bias, device=device, dtype=dtype, is_expert=is_expert
             )
-        
+
         if self.activation_type is ActivationType.swiglu.name:
             self.activation_fn = Silu
         else:
@@ -121,7 +121,6 @@ class FeedForward(nn.Module):
         w1_o = self.w1(x)
         w3_o = self.w3(x)
         return self.w2(self.activation_fn(w1_o, w3_o))
-
 
 
 class GroupedFeedForward(nn.Module):
