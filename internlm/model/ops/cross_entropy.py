@@ -14,18 +14,15 @@ from torch import nn
 from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-
 from internlm.model.ops.cross_entropy_ops import (
+    CrossEntropyApexVocabParallel,
     CrossEntropyLossApex,
     CrossEntropyPython,
-    CrossEntropyApexVocabParallel,
 )
-
 from internlm.utils.logger import get_logger
 
 logger = get_logger(__file__)
 internlm_accelerator = get_accelerator()
-
 
 
 def average_losses_across_data_parallel_group(losses):
@@ -38,11 +35,11 @@ def average_losses_across_data_parallel_group(losses):
 
 
 class CrossEntropyOpType(Enum):
-    torch_naive = 1 # CrossEntropy from torch
-    flash_vocab_parallel = 2 # VocabParallel CorssEntropy from flash_attn
-    apex_naive = 3 # CrossEntropy from apex
-    py_vocab_parallel = 4 # self-implemented VocabParallel CrossEntropy 
-    py_naive = 5 # self-implemented CrossEntropy 
+    torch_naive = 1  # CrossEntropy from torch
+    flash_vocab_parallel = 2  # VocabParallel CorssEntropy from flash_attn
+    apex_naive = 3  # CrossEntropy from apex
+    py_vocab_parallel = 4  # self-implemented VocabParallel CrossEntropy
+    py_naive = 5  # self-implemented CrossEntropy
     # sequence_parallel = 6 # self-implemented SequenceParallel CrossEntropy
 
 
@@ -77,18 +74,18 @@ def new_cross_entropy(
         ], "no-GPU env only support 'torch_naive' or 'py_vocab_parallel loss function"
 
     if op_type == CrossEntropyOpType.torch_naive:
-        
-        assert parallel_output is False, ("'torch_naive' (nn.CrossEntropyLoss) don't support parallel_output, "
-                    "try use 'flash_vocab_parallel' or 'py_vocab_parallel'")
 
-        return nn.CrossEntropyLoss(
-            reduction=reduction, label_smoothing=label_smoothing, ignore_index=ignore_index
+        assert parallel_output is False, (
+            "'torch_naive' (nn.CrossEntropyLoss) don't support parallel_output, "
+            "try use 'flash_vocab_parallel' or 'py_vocab_parallel'"
         )
 
+        return nn.CrossEntropyLoss(reduction=reduction, label_smoothing=label_smoothing, ignore_index=ignore_index)
+
     elif op_type == CrossEntropyOpType.flash_vocab_parallel:
-        
+
         assert gpc.get_group(ParallelMode.TENSOR) is not None, "The process group should not be None."
-        
+
         try:
             from flash_attn.losses.cross_entropy import (
                 CrossEntropyLoss as FlashCrossEntropyLoss,
@@ -105,42 +102,48 @@ def new_cross_entropy(
         assert (
             internlm_accelerator.get_accelerator_backend() is AcceleratorType.GPU
         ), "flash cross entropy only support gpu backend"
-        
-        logger.warning("You are using flash_attn cross_entropy operators, \
-            which may result loss divergency in long sequence.")
-        
+
+        logger.warning(
+            "You are using flash_attn cross_entropy operators, \
+            which may result loss divergency in long sequence."
+        )
+
         return FlashCrossEntropyLoss(
-                ignore_index=ignore_index,
-                reduction=reduction,
-                label_smoothing=label_smoothing,
-                process_group=gpc.get_group(ParallelMode.TENSOR),
-                inplace_backward=inplace_backward,
-            )
+            ignore_index=ignore_index,
+            reduction=reduction,
+            label_smoothing=label_smoothing,
+            process_group=gpc.get_group(ParallelMode.TENSOR),
+            inplace_backward=inplace_backward,
+        )
 
     elif op_type == CrossEntropyOpType.apex_naive:
-        assert parallel_output is False, ("'apex_naive' (nn.CrossEntropyLoss) can'ts support parallel_output,"
-                    "try use 'flash_vocab_parallel' or 'py_vocab_parallel'")
-        
+        assert parallel_output is False, (
+            "'apex_naive' (nn.CrossEntropyLoss) can'ts support parallel_output,"
+            "try use 'flash_vocab_parallel' or 'py_vocab_parallel'"
+        )
+
         return CrossEntropyLossApex(
-                ignore_index=ignore_index,
-                reduction=reduction,
-                inplace_backward=inplace_backward,
-                label_smoothing=label_smoothing,
-            ) 
+            ignore_index=ignore_index,
+            reduction=reduction,
+            inplace_backward=inplace_backward,
+            label_smoothing=label_smoothing,
+        )
 
     elif op_type == CrossEntropyOpType.py_vocab_parallel:
         assert gpc.get_group(ParallelMode.TENSOR) is not None, "The process group should not be None."
-        
+
         return CrossEntropyApexVocabParallel(
             ignore_index=ignore_index,
             reduction=reduction,
             label_smoothing=label_smoothing,
             process_group=gpc.get_group(ParallelMode.TENSOR),
         )
-    
+
     elif op_type == CrossEntropyOpType.py_naive:
-        assert parallel_output is False, ("'py_naive' (nn.CrossEntropyLoss) don't support parallel_output,"
-                    "try use 'flash_vocab_parallel' or 'py_vocab_parallel'")
+        assert parallel_output is False, (
+            "'py_naive' (nn.CrossEntropyLoss) don't support parallel_output,"
+            "try use 'flash_vocab_parallel' or 'py_vocab_parallel'"
+        )
         return CrossEntropyPython(ignore_index=ignore_index, reduction=reduction)
 
     else:

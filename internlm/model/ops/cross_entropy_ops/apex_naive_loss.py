@@ -14,7 +14,6 @@ else:
 internlm_accelerator = get_accelerator()
 
 
-
 class SoftmaxCrossEntropyLossFn(torch.autograd.Function):
     """
     Adapt from: https://github.com/NVIDIA/apex/blob/master/apex/contrib/xentropy/softmax_xentropy.py

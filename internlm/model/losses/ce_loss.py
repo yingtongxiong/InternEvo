@@ -2,9 +2,11 @@ import torch
 from torch import nn
 
 from internlm.accelerator import get_accelerator
+from internlm.core.context import global_context as gpc
 from internlm.model.ops.cross_entropy import new_cross_entropy
 
 internlm_accelerator = get_accelerator()
+
 
 class InternLoss(nn.Module):
     """We use a base class to wrap different CrossEntropy implementations
@@ -50,13 +52,13 @@ class InternLoss(nn.Module):
         # In order to facilitate the calculation of loss for different datasets, we set reduction as 'none',
         # and do loss reduction ourselves.
         self.loss_fn = new_cross_entropy(
-                        op_type=op_type,
-                        ignore_index=ignore_index,
-                        label_smoothing=label_smoothing,
-                        parallel_output=parallel_output,
-                        inplace_backward=inplace_backward,
-                        reduction="none",
-                    )
+            op_type=op_type,
+            ignore_index=ignore_index,
+            label_smoothing=label_smoothing,
+            parallel_output=parallel_output,
+            inplace_backward=inplace_backward,
+            reduction="none",
+        )
 
     def forward(self, *args):
         if len(args) == 3:

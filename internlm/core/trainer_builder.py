@@ -174,7 +174,7 @@ class TrainerBuilder(Trainer):
 
     def _initialize_criterion(self) -> InternLoss:
         return InternLoss(
-            parallel_output=gpc.config.model.parallel_output, 
+            parallel_output=gpc.config.model.parallel_output,
             label_smoothing=gpc.config.loss.label_smoothing,
             op_type=gpc.config.loss.op_type,
         )

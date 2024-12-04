@@ -433,7 +433,7 @@ def args_sanity_check():
         TensorParallelMode.isp.name,
     ]:
         gpc.config.parallel.sequence_parallel = True
-        
+
         if gpc.config.model.get("parallel_output", False) is False:
             logger.warning("When enable sequence parallel, it recommend to enable parallel_output")
 
@@ -570,7 +570,7 @@ def args_sanity_check():
             assert (
                 gpc.config.data.use_packed_dataset is False
             ), "only unpacked data is supported when using 2D sequence parallel."
-    
+
     # loss operator type
     loss_cfg = gpc.config.loss
     if loss_cfg.get("op_type", None) is None:

@@ -4,6 +4,7 @@ from torch import nn
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 
+
 # Adapted from https://github.com/microsoft/Megatron-DeepSpeed/blob/main/megatron/core/ \
 # sequence_parallel/cross_entropy.py
 class _VocabSequenceParallelCrossEntropy(torch.autograd.Function):
@@ -78,7 +79,6 @@ class _VocabSequenceParallelCrossEntropy(torch.autograd.Function):
 
 def vocab_sequence_parallel_cross_entropy(vocab_parallel_logits, target, label_smoothing=0.0):
     return _VocabSequenceParallelCrossEntropy.apply(vocab_parallel_logits, target, label_smoothing)
-
 
 
 class VocabSequenceParallelCrossEntropyLoss(nn.Module):

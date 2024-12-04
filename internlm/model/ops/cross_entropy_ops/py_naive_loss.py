@@ -5,6 +5,7 @@ from internlm.accelerator import get_accelerator
 
 internlm_accelerator = get_accelerator()
 
+
 class CrossEntropyWriteInPython(torch.autograd.Function):
     """baseline for unit test."""
 
