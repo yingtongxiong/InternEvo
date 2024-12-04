@@ -4,6 +4,8 @@ from torch import nn
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 
+# Adapted from https://github.com/microsoft/Megatron-DeepSpeed/blob/main/megatron/core/ \
+# sequence_parallel/cross_entropy.py
 class _VocabSequenceParallelCrossEntropy(torch.autograd.Function):
     """
     Cross Entropy module for isp.
