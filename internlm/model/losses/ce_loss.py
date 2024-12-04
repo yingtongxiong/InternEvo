@@ -2,7 +2,6 @@ import torch
 from torch import nn
 
 from internlm.accelerator import get_accelerator
-from internlm.core.context import global_context as gpc
 from internlm.model.ops.cross_entropy import new_cross_entropy
 
 internlm_accelerator = get_accelerator()
@@ -33,8 +32,7 @@ class InternLoss(nn.Module):
 
         if label_smoothing is not None:
             if label_smoothing != 0:
-                if gpc.is_rank_for_log():
-                    print(f"use label_smoothing: {label_smoothing}")
+                print(f"use label_smoothing: {label_smoothing}", flush=True)
         else:
             label_smoothing = 0
 
