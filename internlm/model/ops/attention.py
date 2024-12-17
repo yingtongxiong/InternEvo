@@ -886,6 +886,8 @@ class SelfAttention(nn.Module):
         attention_dropout (float): Dropout rate for attention scores. Defaults to 0.0.
     """
 
+    is_attn_cls = True
+
     def __init__(self, causal=False, softmax_scale=None, attention_dropout=0.0, layer_idx=0):
         super().__init__()
         self.causal = causal
@@ -928,7 +930,7 @@ class SelfAttention(nn.Module):
 
         # TODO: more unified interface
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         extra_kwargs = {}
         if attn_type is AttnType.SlidingWindowZigZagFlash:
@@ -944,7 +946,7 @@ class SelfAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.FixedLenKVPacked)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         extra_kwargs = {}
         if attn_type is AttnType.SlidingWindowZigZagFlash:
@@ -960,7 +962,7 @@ class SelfAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.FixedLenQKVSplited)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if (attn_type is AttnType.Torch and key_padding_mask is not None) else ()
+        extra_args = (key_padding_mask,) if (attn_type is AttnType.Torch and key_padding_mask is not None) else ()
 
         extra_kwargs = {}
         if attn_type is AttnType.SlidingWindowZigZagFlash:
@@ -984,7 +986,7 @@ class SelfAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.VarLenQKVPacked)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(qkv, cu_seqlens, max_seqlen, dropout, softmax_scale, causal, *extra_args)
 
@@ -1007,7 +1009,7 @@ class SelfAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.VarLenKVPacked)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(
             q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout, softmax_scale, causal, *extra_args
@@ -1033,7 +1035,7 @@ class SelfAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.VarLenQKVSplited)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(
             q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout, softmax_scale, causal, *extra_args
@@ -1088,7 +1090,7 @@ class CrossAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.FixedLenKVPacked)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(q, kv, dropout, softmax_scale, causal, *extra_args)
 
@@ -1100,7 +1102,7 @@ class CrossAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.FixedLenQKVSplited)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(q, k, v, dropout, softmax_scale, causal, *extra_args)
 
@@ -1123,7 +1125,7 @@ class CrossAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.VarLenKVPacked)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(
             q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout, softmax_scale, causal, *extra_args
@@ -1149,7 +1151,7 @@ class CrossAttention(nn.Module):
         attn_type, op = _select_attn_op(AttnOpType.VarLenQKVSplited)
 
         dropout = self.dropout if attn_type is AttnType.Torch else self.dropout.p
-        extra_args = (key_padding_mask) if attn_type is AttnType.Torch else ()
+        extra_args = (key_padding_mask,) if attn_type is AttnType.Torch else ()
 
         return op(
             q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, dropout, softmax_scale, causal, *extra_args
