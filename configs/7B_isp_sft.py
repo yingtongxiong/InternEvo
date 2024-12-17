@@ -1,5 +1,5 @@
 JOB_NAME = "7b_train"
-# model_type = "INTERNLM2_PUBLIC"
+model_type = "INTERNLM2_PUBLIC"
 DO_ALERT = False
 
 VOCAB_SIZE = 103168
@@ -161,7 +161,7 @@ model = dict(
     parallel_output=True,
     hidden_size=HIDDEN_SIZE,
     num_layers=NUM_LAYER,
-    # no_bias=True,
+    no_bias=True,
     mlp_ratio=MLP_RATIO,
     apply_post_layer_norm=False,
     dtype="torch.bfloat16",  # Support: "torch.float16", "torch.half", "torch.bfloat16", "torch.float32", "torch.tf32"
