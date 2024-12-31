@@ -3,9 +3,9 @@ model_type = "INTERNLM2_PUBLIC"
 DO_ALERT = False
 
 VOCAB_SIZE = 92544
-SEQ_LEN = 256 * 1024
-HIDDEN_SIZE = 8192 #4096 
-NUM_ATTENTION_HEAD = 64 #32 
+SEQ_LEN = 1024 * 1024
+HIDDEN_SIZE = 4096 #8192
+NUM_ATTENTION_HEAD = 32 #64 
 NUM_KV_ATTENTION_HEAD = 8
 MLP_RATIO = 3.5
 NUM_LAYER = 8
@@ -100,7 +100,7 @@ grad_scaler = dict(
 hybrid_zero_optimizer = dict(
     # Enable low_level_optimzer overlap_communication
     overlap_sync_grad=True,
-    overlap_sync_param=False,
+    overlap_sync_param=True,
     # bucket size for nccl communication params
     reduce_bucket_size=512 * 1024 * 1024,
     # grad clipping
