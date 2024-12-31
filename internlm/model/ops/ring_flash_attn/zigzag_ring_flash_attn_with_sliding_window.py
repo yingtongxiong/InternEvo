@@ -9,8 +9,6 @@ from internlm.core.parallel.comm import get_offload_manager
 
 from .utils import RingComm, update_out_and_lse
 
-fa_output_mapping = {}
-
 
 def create_buffer(tensor):
     buffer_shape = list(tensor.shape)
@@ -443,7 +441,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
         assert alibi_slopes is None
         k = k.contiguous()
         v = v.contiguous()
-        
+
         _ckpt_block_num = int(gpc.config.model.checkpoint * gpc.config.isp_num_layers)
 
         if gpc.is_forward is False and gpc.config.selective_checkpoint and layer_idx < _ckpt_block_num:
@@ -463,9 +461,7 @@ class ZigZagRingFlashAttnFunc(torch.autograd.Function):
 
         # store attn forward output to avoid re-computation of attn when activation checkpoint is enabled
         if gpc.is_forward and gpc.config.selective_checkpoint and layer_idx < _ckpt_block_num:
-            get_offload_manager().insert_fa_output_with_layer(
-                layer_idx=layer_idx, output=(out, softmax_lse)
-            )
+            get_offload_manager().insert_fa_output_with_layer(layer_idx=layer_idx, output=(out, softmax_lse))
 
         # this should be out_padded
         ctx.save_for_backward(q, k, v, out, softmax_lse)
