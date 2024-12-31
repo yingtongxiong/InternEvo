@@ -1,21 +1,21 @@
-JOB_NAME = "7b_train"
+JOB_NAME = "70b_internlm2_loongTrain"
 model_type = "INTERNLM2_PUBLIC"
 DO_ALERT = False
 
-VOCAB_SIZE = 103168
-SEQ_LEN = 2048
-HIDDEN_SIZE = 4096
-NUM_ATTENTION_HEAD = 32
+VOCAB_SIZE = 92544
+SEQ_LEN = 256 * 1024
+HIDDEN_SIZE = 8192 #4096
+NUM_ATTENTION_HEAD = 64 #32
 NUM_KV_ATTENTION_HEAD = 8
-MLP_RATIO = 8 / 3
-NUM_LAYER = 32
+MLP_RATIO = 3.5
+NUM_LAYER = 8
 
 
-MODEL_ONLY_FOLDER = "local:llm_ckpts/xxxx"
+MODEL_ONLY_FOLDER = None #"local:llm_ckpts/xxxx"
 # Ckpt folder format:
 # fs: 'local:/mnt/nfs/XXX'
-SAVE_CKPT_FOLDER = "local:llm_ckpts"
-LOAD_CKPT_FOLDER = "local:llm_ckpts/49"
+SAVE_CKPT_FOLDER = None #"local:llm_ckpts"
+LOAD_CKPT_FOLDER = None #"local:llm_ckpts/49"
 
 # boto3 Ckpt folder format:
 # import os
@@ -41,28 +41,27 @@ ckpt = dict(
     # path specified in `load_ckpt_info` by default.
     # If you want to initialize your model weights from another model, you must set `auto_resume` to False.
     # If you want to train from scratch, please set `auto_resume` to False and 'load_ckpt_info' to None.
-    auto_resume=True,
+    auto_resume=False,
     checkpoint_every=CHECKPOINT_EVERY,
     async_upload=True,  # async ckpt upload. (only work for boto3 ckpt)
     async_upload_tmp_folder="/dev/shm/internlm_tmp_ckpt/",  # path for temporarily files during asynchronous upload.
     oss_snapshot_freq=int(CHECKPOINT_EVERY / 2),  # snapshot ckpt save frequency.
 )
 
-# TRAIN_FOLDER = "/mnt/petrelfs/share_data/llm_data/0715_llama_tokenized_refined_real/train/"
-TRAIN_FOLDER = None  # "/path/to/dataset"
+TRAIN_FOLDER = None
 VALID_FOLDER = None  # "/path/to/dataset"
 data = dict(
     seq_len=SEQ_LEN,
     # micro_num means the number of micro_batch contained in one gradient update
-    micro_num=4,
+    micro_num=1,
     # packed_length = micro_bsz * SEQ_LEN
-    micro_bsz=2,
+    micro_bsz=1,
     # defaults to the value of micro_num
     valid_micro_num=4,
     # defaults to 0, means disable evaluate
-    valid_every=50,
+    valid_every=0,
     pack_sample_into_one=False,
-    total_steps=50000,
+    total_steps=20000,
     skip_batches="",
     # rampup_batch_size (str): A string with three space-separated integers representing the
     #       starting batch size, the increment, and the number of steps between
@@ -76,7 +75,7 @@ data = dict(
     valid_folder=VALID_FOLDER,
     empty_cache_and_diag_interval=200,
     diag_outlier_ratio=1.1,
-    # use_packed_dataset=False,
+    use_packed_dataset=False,
 )
 
 grad_scaler = dict(
@@ -122,11 +121,7 @@ hybrid_zero_optimizer = dict(
 
 #         * op_types that ends with "naive" only support parallel_output=False;
 #         * if in no-GPU env, only "torch_naive" and "py_vocab_parallel" are supported.
-
-loss = dict(
-    label_smoothing=0,
-    op_type="flash_vocab_parallel",
-)
+loss = dict(label_smoothing=0, op_type="py_vocab_parallel")
 
 adam = dict(
     lr=1e-4,
@@ -153,7 +148,8 @@ beta2_scheduler = dict(
 
 use_fp32_norm = False
 model = dict(
-    checkpoint=False,  # The proportion of layers for activation aheckpointing, the optional value are True/False/[0-1]
+    checkpoint=False,
+    num_chunks=1,
     num_attention_heads=NUM_ATTENTION_HEAD,
     embed_split_hidden=True,
     vocab_size=VOCAB_SIZE,
@@ -164,11 +160,11 @@ model = dict(
     no_bias=True,
     mlp_ratio=MLP_RATIO,
     apply_post_layer_norm=False,
-    dtype="torch.bfloat16",  # Support: "torch.float16", "torch.half", "torch.bfloat16", "torch.float32", "torch.tf32"
+    dtype="torch.bfloat16",
     norm_type="rmsnorm",
     layer_norm_epsilon=1e-5,
+    num_kv_attention_heads=NUM_KV_ATTENTION_HEAD,
     use_flash_attn=True,
-    num_chunks=1,  # if num_chunks > 1, interleaved pipeline scheduler is used.
     # Whether the odd and even columns of the query and key in the model are normally interleaved.
     # If it's True, the model's odd and even columns are normally ordered; if it's False,
     # it means that the model has prematurely concatenated all odd columns and even columns in front
@@ -223,13 +219,13 @@ sequence_2D (dict):
 """
 parallel = dict(
     zero1=dict(size=-1),
-    tensor=dict(size=2, mode="isp"),
+    tensor=dict(size=64, mode="isp"),
     pipeline=dict(size=1, interleaved_overlap=True),
-    weight=dict(size=4, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
+    weight=dict(size=1, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
     sequence_2D=dict(
-        enable=False,
-        head_size=2,
-        context_size=4,
+        enable=True,
+        head_size=32,
+        context_size=2,
         window_size=1,
         device_placement_strategy=dict(head_first=True, interleaved=False),
     ),
