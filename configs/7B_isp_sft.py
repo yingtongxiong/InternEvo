@@ -48,7 +48,8 @@ ckpt = dict(
     oss_snapshot_freq=int(CHECKPOINT_EVERY / 2),  # snapshot ckpt save frequency.
 )
 
-TRAIN_FOLDER = None
+# TRAIN_FOLDER = "/mnt/petrelfs/share_data/llm_data/0715_llama_tokenized_refined_real/train/"
+TRAIN_FOLDER = None  # "/path/to/dataset"
 VALID_FOLDER = None  # "/path/to/dataset"
 data = dict(
     seq_len=SEQ_LEN,
@@ -148,9 +149,10 @@ beta2_scheduler = dict(
 
 use_fp32_norm = False
 model = dict(
-    checkpoint=False,
     num_chunks=1,
+    checkpoint=True,  # The proportion of layers for activation aheckpointing, the optional value are True/False/[0-1]
     num_attention_heads=NUM_ATTENTION_HEAD,
+    num_kv_attention_heads=NUM_KV_ATTENTION_HEAD,
     embed_split_hidden=True,
     vocab_size=VOCAB_SIZE,
     embed_grad_scale=1,
@@ -224,8 +226,8 @@ parallel = dict(
     weight=dict(size=1, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
     sequence_2D=dict(
         enable=True,
-        head_size=32,
-        context_size=2,
+        head_size=8,
+        context_size=8,
         window_size=1,
         device_placement_strategy=dict(head_first=True, interleaved=False),
     ),
@@ -233,6 +235,8 @@ parallel = dict(
 
 cudnn_deterministic = False
 cudnn_benchmark = False
+
+# selective_checkpoint = True
 
 monitor = dict(
     # feishu alert configs
