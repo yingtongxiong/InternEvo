@@ -153,7 +153,8 @@ beta2_scheduler = dict(
 )
 
 use_fp32_norm = False
-attention_type = "MLA"
+attention_type = "GQA"
+selective_checkpoint=True
 model = dict(
     num_chunks=1,
     checkpoint=True,  # The proportion of layers for activation aheckpointing, the optional value are True/False/[0-1]
@@ -181,8 +182,6 @@ model = dict(
     # qk_interleaved = False: q[-1] = [q1,q3,q5,...,q2,q4,q6,...], k[-1] = [k1,k3,k5,...,k2,k4,k6,...]
     qk_interleaved=False,
 )
-
-selective_checkpoint=True
 
 """
 zero1 parallel (dict):
