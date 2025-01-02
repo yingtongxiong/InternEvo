@@ -10,6 +10,11 @@ NUM_KV_ATTENTION_HEAD = 8
 MLP_RATIO = 3.5
 NUM_LAYER = 32
 
+# HIDDEN_SIZE = 8192
+# NUM_ATTENTION_HEAD = 64
+# NUM_KV_ATTENTION_HEAD = 64
+# MLP_RATIO = 3.5
+# NUM_LAYER = 80
 
 MODEL_ONLY_FOLDER = None #"local:llm_ckpts/xxxx"
 # Ckpt folder format:
@@ -148,6 +153,7 @@ beta2_scheduler = dict(
 )
 
 use_fp32_norm = False
+attention_type = "MLA"
 model = dict(
     num_chunks=1,
     checkpoint=True,  # The proportion of layers for activation aheckpointing, the optional value are True/False/[0-1]
