@@ -1,4 +1,4 @@
-JOB_NAME = "70b_internlm2_loongTrain"
+JOB_NAME = "7b_internlm2_loongTrain_SC"
 model_type = "INTERNLM2_PUBLIC"
 DO_ALERT = False
 
@@ -8,7 +8,7 @@ HIDDEN_SIZE = 4096 #8192
 NUM_ATTENTION_HEAD = 32 #64 
 NUM_KV_ATTENTION_HEAD = 8
 MLP_RATIO = 3.5
-NUM_LAYER = 8
+NUM_LAYER = 32
 
 
 MODEL_ONLY_FOLDER = None #"local:llm_ckpts/xxxx"
@@ -165,7 +165,6 @@ model = dict(
     dtype="torch.bfloat16",
     norm_type="rmsnorm",
     layer_norm_epsilon=1e-5,
-    num_kv_attention_heads=NUM_KV_ATTENTION_HEAD,
     use_flash_attn=True,
     # Whether the odd and even columns of the query and key in the model are normally interleaved.
     # If it's True, the model's odd and even columns are normally ordered; if it's False,
@@ -176,6 +175,8 @@ model = dict(
     # qk_interleaved = False: q[-1] = [q1,q3,q5,...,q2,q4,q6,...], k[-1] = [k1,k3,k5,...,k2,k4,k6,...]
     qk_interleaved=False,
 )
+
+selective_checkpoint=True
 
 """
 zero1 parallel (dict):
@@ -221,15 +222,15 @@ sequence_2D (dict):
 """
 parallel = dict(
     zero1=dict(size=-1),
-    tensor=dict(size=64, mode="isp"),
+    tensor=dict(size=32, mode="isp"),
     pipeline=dict(size=1, interleaved_overlap=True),
     weight=dict(size=1, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer"),
     sequence_2D=dict(
         enable=True,
-        head_size=8,
+        head_size=4,
         context_size=8,
         window_size=1,
-        device_placement_strategy=dict(head_first=True, interleaved=False),
+        device_placement_strategy=dict(head_first=False, interleaved=False),
     ),
 )
 
