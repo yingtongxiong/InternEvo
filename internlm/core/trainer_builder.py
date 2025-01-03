@@ -352,6 +352,7 @@ class TrainerBuilder(Trainer):
                 * gpc.get_world_size(ParallelMode.DATA),
                 global_world_size=gpc.get_world_size(ParallelMode.GLOBAL),
                 mlp_ratio=gpc.config.model["mlp_ratio"],
+                num_heads=gpc.config.model["num_attention_heads"]
             )
         else:
             get_tflops_func = partial(
