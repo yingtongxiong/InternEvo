@@ -35,6 +35,9 @@ def zigzag_double_ring_flash_attn_forward(
     local_p2p_comm = RingComm(local_p2p_pg)
 
     block_seq_len = q.shape[1] // 2
+    
+    k_buffer = create_buffer(k)
+    v_buffer = create_buffer(v)
 
     def forward(q, k, v, causal):
         block_out, _, _, _, _, block_lse, _, _ = _flash_attn_forward(
@@ -55,8 +58,8 @@ def zigzag_double_ring_flash_attn_forward(
         for step in range(local_p2p_comm.world_size):
 
             if step + 1 != local_p2p_comm.world_size:
-                next_k: torch.Tensor = local_p2p_comm.send_recv(k)
-                next_v: torch.Tensor = local_p2p_comm.send_recv(v)
+                next_k: torch.Tensor = local_p2p_comm.send_recv(k, k_buffer)
+                next_v: torch.Tensor = local_p2p_comm.send_recv(v, v_buffer)
                 local_p2p_comm.commit()
 
             if step == 0:
@@ -97,8 +100,8 @@ def zigzag_double_ring_flash_attn_forward(
             for step in range(local_p2p_comm.world_size):
 
                 if step + 1 != local_p2p_comm.world_size:
-                    next_k: torch.Tensor = local_p2p_comm.send_recv(k)
-                    next_v: torch.Tensor = local_p2p_comm.send_recv(v)
+                    next_k: torch.Tensor = local_p2p_comm.send_recv(k, k_buffer)
+                    next_v: torch.Tensor = local_p2p_comm.send_recv(v, v_buffer)
                     local_p2p_comm.commit()
 
                 q1 = q[:, block_seq_len:]
@@ -119,8 +122,8 @@ def zigzag_double_ring_flash_attn_forward(
             for step in range(local_p2p_comm.world_size):
 
                 if step + 1 != local_p2p_comm.world_size:
-                    next_k: torch.Tensor = local_p2p_comm.send_recv(k)
-                    next_v: torch.Tensor = local_p2p_comm.send_recv(v)
+                    next_k: torch.Tensor = local_p2p_comm.send_recv(k, k_buffer)
+                    next_v: torch.Tensor = local_p2p_comm.send_recv(v, v_buffer)
                     local_p2p_comm.commit()
 
                 k0 = k[:, :block_seq_len]
@@ -148,8 +151,8 @@ def zigzag_double_ring_flash_attn_forward(
             local_v = next_v
 
         if j + 1 != window_num:
-            next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous())
-            next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous())
+            next_k: torch.Tensor = p2p_comm.send_recv(local_k.contiguous(), k_buffer)
+            next_v: torch.Tensor = p2p_comm.send_recv(local_v.contiguous(), v_buffer)
             p2p_comm.commit()
 
         if j == 0:
@@ -197,6 +200,9 @@ def zigzag_double_ring_flash_attn_backward(
     dq_buffer = create_buffer(q)
     dk_buffer = create_buffer(k)
     dv_buffer = create_buffer(v)
+    
+    k_back_buffer = create_buffer(k)
+    v_back_buffer = create_buffer(v)
 
     def backward(dout, q, k, v, out, softmax_lse, causal):
         seqlen_q = q.shape[1]
@@ -224,8 +230,8 @@ def zigzag_double_ring_flash_attn_backward(
 
         for step in range(local_kv_comm.world_size):
             if step + 1 != local_kv_comm.world_size:
-                next_k = local_kv_comm.send_recv(k)
-                next_v = local_kv_comm.send_recv(v)
+                next_k = local_kv_comm.send_recv(k, k_back_buffer)
+                next_v = local_kv_comm.send_recv(v, v_back_buffer)
                 local_kv_comm.commit()
 
             if step == 0:
@@ -281,8 +287,8 @@ def zigzag_double_ring_flash_attn_backward(
             for step in range(local_kv_comm.world_size):
 
                 if step + 1 != local_kv_comm.world_size:
-                    next_k = local_kv_comm.send_recv(k)
-                    next_v = local_kv_comm.send_recv(v)
+                    next_k = local_kv_comm.send_recv(k, k_back_buffer)
+                    next_v = local_kv_comm.send_recv(v, v_back_buffer)
                     local_kv_comm.commit()
 
                 dout1 = dout.chunk(2, dim=1)[1]
@@ -319,8 +325,8 @@ def zigzag_double_ring_flash_attn_backward(
             for step in range(local_kv_comm.world_size):
 
                 if step + 1 != local_kv_comm.world_size:
-                    next_k = local_kv_comm.send_recv(k)
-                    next_v = local_kv_comm.send_recv(v)
+                    next_k = local_kv_comm.send_recv(k, k_back_buffer)
+                    next_v = local_kv_comm.send_recv(v, v_back_buffer)
                     local_kv_comm.commit()
 
                 k0 = k[:, :block_seq_len]
@@ -366,8 +372,8 @@ def zigzag_double_ring_flash_attn_backward(
             local_v = next_v
 
         if j + 1 != window_num:
-            next_k: torch.Tensor = kv_comm.send_recv(local_k.contiguous())
-            next_v: torch.Tensor = kv_comm.send_recv(local_v.contiguous())
+            next_k: torch.Tensor = kv_comm.send_recv(local_k.contiguous(), k_back_buffer)
+            next_v: torch.Tensor = kv_comm.send_recv(local_v.contiguous(), v_back_buffer)
             kv_comm.commit()
 
         if j > 0:
