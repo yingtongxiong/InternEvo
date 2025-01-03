@@ -324,8 +324,8 @@ class MLA(nn.Module):
             **factory_kwargs,
         )
 
-        self.inner_attn = SelfAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
-        self.inner_cross_attn = CrossAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
+        self.inner_attn = SelfAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout, layer_idx=layer_idx)
+        self.inner_cross_attn = CrossAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout, layer_idx=layer_idx)
 
         # output projection always have the bias (for now) (except for baichuan2 model)
         self.out_proj = new_linear(
