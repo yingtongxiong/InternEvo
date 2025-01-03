@@ -62,9 +62,6 @@ class RingComm:
         self.rank = dist.get_rank(self._process_group)
         self.world_size = dist.get_world_size(self._process_group)
         self._reqs = None
-        
-        self._bufs = []
-        self._bufs_ready = False
 
         self.send_rank = (self.rank + 1) % self.world_size
         self.recv_rank = (self.rank - 1) % self.world_size
@@ -75,12 +72,8 @@ class RingComm:
             # print(f'rank:{self.rank},send_rank:{self.send_rank},recv_rank:{self.recv_rank}')
 
     def send_recv(self, to_send: torch.Tensor, recv_tensor: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if self._bufs_ready and recv_tensor is None:
-            res = self._bufs.pop(0)
-            self._bufs.append(to_send)            
-        elif recv_tensor is None:
+        if recv_tensor is None:
             res = torch.empty_like(to_send)
-            self._bufs.append(to_send)
         else:
             res = recv_tensor
 
@@ -100,6 +93,5 @@ class RingComm:
             raise RuntimeError("wait called before commit")
         for req in self._reqs:
             req.wait()
-        self._bufs_ready = True
         self._reqs = None
         self._ops = []
