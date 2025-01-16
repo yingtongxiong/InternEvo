@@ -509,8 +509,8 @@ class InternLM2(BaseModel):
             embed_concat_dim = 0
 
         new_state_dict = {}
-        
-        is_internlm3 = gpc.config.model_type is "INTERNLM3_PUBLIC"
+
+        is_internlm3 = gpc.config.model_type == "INTERNLM3_PUBLIC"
 
         for idx, i in enumerate(range(model.first_layer, model.last_layer)):
             layer_ids = i
@@ -572,7 +572,9 @@ class InternLM2(BaseModel):
             )
             # ffn norm
             ffn_norm_name = "post_attention_layernorm" if is_internlm3 else "ffn_norm"
-            state_dict[f"layers.{i}.ffn_norm.weight"] = state_dict.pop(f"model.layers.{layer_ids}.{ffn_norm_name}.weight")
+            state_dict[f"layers.{i}.ffn_norm.weight"] = state_dict.pop(
+                f"model.layers.{layer_ids}.{ffn_norm_name}.weight"
+            )
 
             # replace value within decoder layer
             for name in list(state_dict.keys()):
@@ -823,8 +825,8 @@ class InternLM2(BaseModel):
 
         # load states
         states, num_shards = InternLM2.load_sharded_states(src)
-        is_internlm3 = gpc.config.model_type is "INTERNLM3_PUBLIC"
-        
+        is_internlm3 = gpc.config.model_type == "INTERNLM3_PUBLIC"
+
         # convert state_dict
         state_dict = {}
         embedding_key_list = ["tok_embeddings.word_embeddings.weight", "tok_embeddings.weight", None]
@@ -837,7 +839,9 @@ class InternLM2(BaseModel):
                     f"model.layers.{layer_i}.{attn_norm_name}.weight": states[0][
                         f"layers.{layer_i}.attention_norm.weight"
                     ].clone(),
-                    f"model.layers.{layer_i}.{ffn_norm_name}.weight": states[0][f"layers.{layer_i}.ffn_norm.weight"].clone(),
+                    f"model.layers.{layer_i}.{ffn_norm_name}.weight": states[0][
+                        f"layers.{layer_i}.ffn_norm.weight"
+                    ].clone(),
                 }
             )
             # attn

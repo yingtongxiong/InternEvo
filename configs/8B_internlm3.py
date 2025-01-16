@@ -11,10 +11,10 @@ MLP_RATIO = 2.5
 NUM_LAYER = 48
 
 
-MODEL_ONLY_FOLDER = None #"local:llm_ckpts/xxxx"
+MODEL_ONLY_FOLDER = None  # "local:llm_ckpts/xxxx"
 # Ckpt folder format:
 # fs: 'local:/mnt/nfs/XXX'
-SAVE_CKPT_FOLDER = None #"local:llm_ckpts"
+SAVE_CKPT_FOLDER = None  # "local:llm_ckpts"
 # LOAD_CKPT_FOLDER = "local:llm_ckpts/49"
 
 # boto3 Ckpt folder format:
