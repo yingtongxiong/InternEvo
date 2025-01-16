@@ -510,13 +510,13 @@ class InternLM2(BaseModel):
 
         new_state_dict = {}
 
-        is_internlm3 = gpc.config.model_type == "INTERNLM3_PUBLIC"
+        is_internlm3 = gpc.config.model_type == "INTERNLM3"
 
         for idx, i in enumerate(range(model.first_layer, model.last_layer)):
             layer_ids = i
 
             # attn
-            if is_internlm3 is True:
+            if is_internlm3:
                 state_dict[f"layers.{i}.attention.wq.weight"] = torch.chunk(
                     state_dict.pop(f"model.layers.{layer_ids}.self_attn.q_proj.weight"),
                     split_size,
@@ -615,7 +615,7 @@ class InternLM2(BaseModel):
     def load_internlm2_with_dynamic_parallel_size(folder, model):
         """Load InternLM2 with dynamic parallel size."""
         assert folder is not None, "Please specify the folder of the pretrained model"
-        assert gpc.config.model_type in ["INTERNLM2_PUBLIC"], "dynamic_parallel is only for INTERNLM2_PUBLIC"
+        assert gpc.config.model_type in ["INTERNLM2"], "dynamic_parallel is only for INTERNLM2"
 
         fns = get_fns(folder)
         if gpc.is_rank_for_log():
@@ -669,7 +669,7 @@ class InternLM2(BaseModel):
                         if f".{i-start}." in name:
                             to_name = name.replace(f".{i-start}.", f".{i-model.first_layer}.")
 
-                            if gpc.config.model_type == "INTERNLM2_PUBLIC":
+                            if gpc.config.model_type == "INTERNLM2":
                                 if "norm" in name:
                                     tmp_states[to_name] = [states.pop(name)]
                                 elif any(x in name for x in ("wo", "w2")):
@@ -825,7 +825,7 @@ class InternLM2(BaseModel):
 
         # load states
         states, num_shards = InternLM2.load_sharded_states(src)
-        is_internlm3 = gpc.config.model_type == "INTERNLM3_PUBLIC"
+        is_internlm3 = gpc.config.model_type == "INTERNLM3"
 
         # convert state_dict
         state_dict = {}

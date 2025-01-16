@@ -1,5 +1,6 @@
+# Copyright (c) InternLM. All rights reserved.
 JOB_NAME = "8b_internlm3_train"
-model_type = "INTERNLM3_PUBLIC"
+model_type = "INTERNLM3"
 DO_ALERT = False
 
 VOCAB_SIZE = 128512
