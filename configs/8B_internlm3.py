@@ -1,5 +1,5 @@
 JOB_NAME = "8b_internlm3_train"
-model_type = "INTERNLM2_PUBLIC"
+model_type = "INTERNLM3_PUBLIC"
 DO_ALERT = False
 
 VOCAB_SIZE = 128512
@@ -174,6 +174,7 @@ model = dict(
     # qk_interleaved = False: q[-1] = [q1,q3,q5,...,q2,q4,q6,...], k[-1] = [k1,k3,k5,...,k2,k4,k6,...]
     qk_interleaved=False,
     rope_base=50000000,
+    enable_qkv_fusion=False,
 )
 
 """

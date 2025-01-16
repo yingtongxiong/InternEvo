@@ -307,6 +307,9 @@ def args_sanity_check():
         logger.info(f"clip_grad_norm: {clip_grad_norm}")
 
     model = gpc.config.model
+    if "enable_qkv_fusion" not in model:
+        model._add_item("enable_qkv_fusion", True)
+
     if "dtype" not in model:
         logger.warning("dtype is not set, use torch.float16 by defalut!")
         model._add_item("dtype", torch.float16)
