@@ -863,7 +863,7 @@ class InternLM2(BaseModel):
                     num_heads=model_config["num_attention_heads"],
                     num_kv_heads=model_config["num_kv_attention_heads"],
                     head_dim=model_config["hidden_size"] // model_config["num_attention_heads"],
-                    adapt_hf=model_config.get("adapt_hf", True),
+                    adapt_hf=not model_config["qk_interleaved"],
                 )
             wo_name = "self_attn.o_proj" if is_internlm3 else "attention.wo"
             state_dict[f"model.layers.{layer_i}.{wo_name}.weight"] = torch.cat(
