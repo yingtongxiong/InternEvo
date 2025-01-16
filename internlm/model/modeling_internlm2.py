@@ -81,6 +81,7 @@ class InternLM2Decoder(nn.Module):
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
         mlp_layer_fusion (bool): Whether to fuse layers in the mlp module for optimization.
         multiple_of (int): Ensures mlp dimensions are multiples of this value for efficient hardware utilization.
+        enable_qkv_fusion(bool): Whether to fuse Wq,Wk,Wv computation. True by default.
     """
 
     def __init__(
@@ -336,6 +337,7 @@ class InternLM2(BaseModel):
         norm_head (bool): Whether to use norm head. False by default.
         mlp_layer_fusion (bool): Whether to fuse layers in the mlp module for optimization.
         multiple_of (int): Ensures mlp dimensions are multiples of this value for efficient hardware utilization.
+        enable_qkv_fusion(bool): Whether to fuse Wq,Wk,Wv computation. True by default.
     """
 
     def __init__(

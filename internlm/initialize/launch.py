@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
+# Copyright (c) InternLM. All rights reserved.
 
 import argparse
 import os
@@ -386,10 +387,12 @@ def args_sanity_check():
             model._add_item("qk_interleaved", not gpc.config.model.adapt_hf)
         else:
             model._add_item("qk_interleaved", False)
-    elif "adapt_hf" in gpc.config.model:
-        assert gpc.config.model.adapt_hf == (
-            not gpc.config.model.qk_interleaved
-        ), "adapt_hf and qk_interleaved must be opposite"
+    elif "adapt_hf" not in gpc.config.model:
+        model._add_item("adapt_hf", not gpc.config.model.qk_interleaved)
+
+    assert gpc.config.model.adapt_hf == (
+        not gpc.config.model.qk_interleaved
+    ), "adapt_hf and qk_interleaved must be opposite"
 
     # process the parallel config
     if "sequence_parallel" not in gpc.config.parallel:
