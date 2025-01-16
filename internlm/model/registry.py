@@ -85,6 +85,7 @@ model_initializer = Registry("model_initializer")
 def register_model_initializer() -> None:
     model_initializer.register_module(ModelType.INTERNLM.name, InternLM1)
     model_initializer.register_module(ModelType.INTERNLM2_PUBLIC.name, InternLM2)
+    model_initializer.register_module(ModelType.INTERNLM3_PUBLIC.name, InternLM2)
     model_initializer.register_module(ModelType.LLAMA2.name, Llama2)
     model_initializer.register_module(ModelType.INTERNLM_MoE.name, Internlm1MoE)
     model_initializer.register_module(ModelType.LLAVA.name, Llava)
