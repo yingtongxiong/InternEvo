@@ -5,7 +5,6 @@ from functools import reduce
 from typing import Optional
 
 import torch
-from einops import rearrange
 from torch import nn
 from tqdm import tqdm
 
@@ -481,6 +480,7 @@ class InternLM2(BaseModel):
     def load_hf_weights(folder: str, model: nn.Module) -> None:
         """NOTE: when loading huggingface's llama pretrained weights, you should set `adapt_hf=True` in your config."""
         assert folder is not None, "Please specify the folder of the pretrained model"
+        assert not gpc.config.model["qk_interleaved"], "The qk_interleaved should set True."
         if gpc.is_rank_for_log():
             logger.info(f"Loading pretrained model from {folder}")
 
@@ -549,18 +549,19 @@ class InternLM2(BaseModel):
 
             # ffn
             w1_name = "mlp.gate_proj" if is_internlm3 else "feed_forward.w1"
+            w3_name = "mlp.up_proj" if is_internlm3 else "feed_forward.w3"
+            w2_name = "mlp.down_proj" if is_internlm3 else "feed_forward.w2"
+            
             state_dict[f"layers.{i}.feed_forward.w1.weight"] = torch.chunk(
                 state_dict.pop(f"model.layers.{layer_ids}.{w1_name}.weight"),
                 split_size,
                 dim=0,
             )[local_rank]
-            w3_name = "mlp.up_proj" if is_internlm3 else "feed_forward.w3"
             state_dict[f"layers.{i}.feed_forward.w3.weight"] = torch.chunk(
                 state_dict.pop(f"model.layers.{layer_ids}.{w3_name}.weight"),
                 split_size,
                 dim=0,
             )[local_rank]
-            w2_name = "mlp.down_proj" if is_internlm3 else "feed_forward.w2"
             state_dict[f"layers.{i}.feed_forward.w2.weight"] = torch.chunk(
                 state_dict.pop(f"model.layers.{layer_ids}.{w2_name}.weight"),
                 split_size,
@@ -805,18 +806,6 @@ class InternLM2(BaseModel):
 
     @staticmethod
     def convert_internevo2hf_weights(src: str, tgt: str) -> None:
-        def permute(qkv, num_heads, num_kv_heads, head_dim, adapt_hf=True):
-            if adapt_hf:
-                return qkv
-            q_per_kv = num_heads // num_kv_heads
-            qkv = rearrange(qkv.T, "o (g n i) -> o g n i", n=q_per_kv + 2, i=head_dim)
-            q, k, v = qkv[..., :q_per_kv, :], qkv[..., -2:-1, :], qkv[..., -1:, :]
-            q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
-            k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
-            qkv = torch.cat((q, k, v), dim=2)
-            qkv = rearrange(qkv, "o g n i -> o (g n i)").T
-            return qkv
-
         model_config = gpc.config.model
         tp_mode = gpc.config.parallel.tensor["mode"]
         row_dim = 0 if tp_mode == "isp" else 1
@@ -847,38 +836,34 @@ class InternLM2(BaseModel):
                 }
             )
             # attn
-            if is_internlm3:
-                state_dict[f"model.layers.{layer_i}.self_attn.q_proj.weight"] = torch.cat(
-                    [states[i][f"layers.{layer_i}.attention.wq.weight"] for i in range(num_shards)], dim=0
-                )
-                state_dict[f"model.layers.{layer_i}.self_attn.k_proj.weight"] = torch.cat(
-                    [states[i][f"layers.{layer_i}.attention.wk.weight"] for i in range(num_shards)], dim=0
-                )
-                state_dict[f"model.layers.{layer_i}.self_attn.v_proj.weight"] = torch.cat(
-                    [states[i][f"layers.{layer_i}.attention.wv.weight"] for i in range(num_shards)], dim=0
-                )
-            else:
-                state_dict[f"model.layers.{layer_i}.attention.wqkv.weight"] = permute(
-                    torch.cat([states[i][f"layers.{layer_i}.attention.wqkv.weight"] for i in range(num_shards)], dim=0),
-                    num_heads=model_config["num_attention_heads"],
-                    num_kv_heads=model_config["num_kv_attention_heads"],
-                    head_dim=model_config["hidden_size"] // model_config["num_attention_heads"],
-                    adapt_hf=not model_config["qk_interleaved"],
-                )
+            wq_name = "self_attn.q_proj" if is_internlm3 else "attention.wq"
+            wk_name = "self_attn.k_proj" if is_internlm3 else "attention.wk"
+            wv_name = "self_attn.v_proj" if is_internlm3 else "attention.wv"
             wo_name = "self_attn.o_proj" if is_internlm3 else "attention.wo"
+
+            state_dict[f"model.layers.{layer_i}.{wq_name}.weight"] = torch.cat(
+                [states[i][f"layers.{layer_i}.attention.wq.weight"] for i in range(num_shards)], dim=0
+            )
+            state_dict[f"model.layers.{layer_i}.{wk_name}.weight"] = torch.cat(
+                [states[i][f"layers.{layer_i}.attention.wk.weight"] for i in range(num_shards)], dim=0
+            )
+            state_dict[f"model.layers.{layer_i}.{wv_name}.weight"] = torch.cat(
+                [states[i][f"layers.{layer_i}.attention.wv.weight"] for i in range(num_shards)], dim=0
+            )
             state_dict[f"model.layers.{layer_i}.{wo_name}.weight"] = torch.cat(
                 [states[i][f"layers.{layer_i}.attention.wo.weight"] for i in range(num_shards)], dim=row_dim
             )
             # ffn
             w1_name = "mlp.gate_proj" if is_internlm3 else "feed_forward.w1"
+            w2_name = "mlp.down_proj" if is_internlm3 else "feed_forward.w2"
+            w3_name = "mlp.up_proj" if is_internlm3 else "feed_forward.w3"
+            
             state_dict[f"model.layers.{layer_i}.{w1_name}.weight"] = torch.cat(
                 [states[i][f"layers.{layer_i}.feed_forward.w1.weight"] for i in range(num_shards)], dim=0
             )
-            w2_name = "mlp.down_proj" if is_internlm3 else "feed_forward.w2"
             state_dict[f"model.layers.{layer_i}.{w2_name}.weight"] = torch.cat(
                 [states[i][f"layers.{layer_i}.feed_forward.w2.weight"] for i in range(num_shards)], dim=row_dim
             )
-            w3_name = "mlp.up_proj" if is_internlm3 else "feed_forward.w3"
             state_dict[f"model.layers.{layer_i}.{w3_name}.weight"] = torch.cat(
                 [states[i][f"layers.{layer_i}.feed_forward.w3.weight"] for i in range(num_shards)], dim=0
             )
