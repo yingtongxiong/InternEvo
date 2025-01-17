@@ -551,7 +551,7 @@ class InternLM2(BaseModel):
             w1_name = "mlp.gate_proj" if is_internlm3 else "feed_forward.w1"
             w3_name = "mlp.up_proj" if is_internlm3 else "feed_forward.w3"
             w2_name = "mlp.down_proj" if is_internlm3 else "feed_forward.w2"
-            
+
             state_dict[f"layers.{i}.feed_forward.w1.weight"] = torch.chunk(
                 state_dict.pop(f"model.layers.{layer_ids}.{w1_name}.weight"),
                 split_size,
@@ -857,7 +857,7 @@ class InternLM2(BaseModel):
             w1_name = "mlp.gate_proj" if is_internlm3 else "feed_forward.w1"
             w2_name = "mlp.down_proj" if is_internlm3 else "feed_forward.w2"
             w3_name = "mlp.up_proj" if is_internlm3 else "feed_forward.w3"
-            
+
             state_dict[f"model.layers.{layer_i}.{w1_name}.weight"] = torch.cat(
                 [states[i][f"layers.{layer_i}.feed_forward.w1.weight"] for i in range(num_shards)], dim=0
             )
